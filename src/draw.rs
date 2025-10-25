@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use anyhow::Result;
 use crate::{keys::{PublicKey, SecretKey, Signature}, util::{hash, BlockPtr, SerToBytes, Timeslot}};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Draw {
     pub value: BigUint,
     pub timeslot: Timeslot,
@@ -56,7 +56,7 @@ impl Draw {
 
 pub const SEED_AGE: i64 = 50;
 
-// The seed starts being the hash of the genesis block, once we reach block depth 51
+// The seed starts being a special genesis hash (hash of root accounts), once we reach block depth 51
 // it will be depth-50, this way the seed is unpredictable
 // we only allow peers to stake if they have had enough money 
 // in the ledger for 100 rounds, that way they would have to predict the hash in 50 blocks
