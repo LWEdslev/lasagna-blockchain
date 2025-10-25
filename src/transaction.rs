@@ -11,14 +11,15 @@ pub struct Transaction {
     pub from: PublicKey,
     pub to: PublicKey,
     pub amount: u64,
+    pub nonce: u64,
     pub signature: Signature,
     pub hash: Sha256Hash,
 }
 
 impl Transaction {
-    pub fn new(from: &SecretKey, to: PublicKey, amount: u64) -> Self {
+    pub fn new(from: &SecretKey, to: PublicKey, amount: u64, nonce: u64) -> Self {
         let from_pk = from.get_public_key().clone();
-        let public_values = ("Transaction", &from_pk, &to, amount);
+        let public_values = ("Transaction", &from_pk, &to, amount, nonce);
         let signature = Signature::sign(from, &public_values.into_bytes());
         
         let hash = hash(&(public_values, signature.clone()).into_bytes());
@@ -27,13 +28,14 @@ impl Transaction {
             from: from_pk,
             to: to.clone(),
             amount,
+            nonce,
             signature,
             hash,
         }
     }
 
     pub fn verify_signature(&self) -> Result<()> {
-        let public_values = ("Transaction", &self.from, &self.to, self.amount);
+        let public_values = ("Transaction", &self.from, &self.to, self.amount, self.nonce);
         self.signature.verify(&self.from, &public_values.into_bytes())
     }
 }
@@ -48,7 +50,7 @@ mod tests {
 
         let sk2 = SecretKey::generate();
         let pk2 = sk2.get_public_key();
-        let mut transaction = Transaction::new(&sk1, pk2, 42);
+        let mut transaction = Transaction::new(&sk1, pk2, 42, 1);
 
         transaction.verify_signature().unwrap();
 

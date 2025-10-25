@@ -31,6 +31,12 @@ pub struct BlockPtr {
     pub depth: i64,
 }
 
+impl BlockPtr {
+    pub fn new(hash: Sha256Hash, depth: i64) -> Self {
+        Self { hash, depth }
+    }
+}
+
 pub type Timeslot = u64;
 
 #[cfg(not(test))]
