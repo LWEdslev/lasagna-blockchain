@@ -109,6 +109,10 @@ impl Ledger {
     }
 
     pub fn can_stake(&self, account: &PublicKey, at_depth: i64) -> bool {
+        if self.root_accounts.contains(account) {
+            return true; // root accounts can stake immediately
+        }
+
         let Some(publ_depth) = self.published_accounts.get(account) else {
             return false;
         };

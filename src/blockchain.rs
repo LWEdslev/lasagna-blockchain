@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
+use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 
-use crate::{block::Block, keys::{PublicKey, SecretKey}, ledger::Ledger, transaction::{self, Transaction}, util::{BlockPtr, MiniLas, Sha256Hash}};
+use crate::{block::Block, draw::{self, Draw}, keys::{PublicKey, SecretKey}, ledger::{self, Ledger}, transaction::{self, Transaction}, util::{BlockPtr, MiniLas, Sha256Hash}};
 use anyhow::{Result, anyhow};
 
 pub const BLOCK_REWARD: MiniLas = 3_000000;
@@ -32,8 +33,8 @@ impl Blockchain {
         todo!()
     }
 
-    pub fn stake() {
-        todo!()
+    pub fn stake(&self, draw: Draw, wallet: &PublicKey, depth: i64) -> bool {
+        is_winner(&self.ledger, draw, wallet, depth)
     }
 
     pub fn add_transaction(&mut self, transaction: Transaction) -> Result<()> {
@@ -59,4 +60,26 @@ impl Blockchain {
     pub fn calculate_reward(&self, block: &Block) -> MiniLas {
         block.transactions.len() as MiniLas * TRANSACTION_FEE + BLOCK_REWARD 
     }
+}
+
+fn is_winner(ledger: &Ledger, draw: Draw, wallet: &PublicKey, depth: i64) -> bool {
+    if !ledger.can_stake(wallet, depth) {
+        return false;
+    }
+
+    let balance = BigUint::from(ledger.get_balance(wallet));
+    let total_money = ledger.get_total_money_in_ledger();
+    let max_hash = BigUint::from(2u64).pow(256);
+
+    // the entire network has a total 10% chance of beating this at a given timeslot
+    let hardness = BigUint::from(10421u64) * (BigUint::from(10u64).pow(73));
+
+    // we must map the draw value which is in [0, 2^256] to [0, h + c(2^256 - h)] where h is hardness and c is the ratio of money we have
+    // we can map this by multiplying the draw with (h + c(2^256 - h))/(2^256)
+    // we can describe c as balance/total_money. Therefore we can multiply total_money to the hardness and write the multiplication factor as:
+    let mult_factor =
+        (hardness.clone() * total_money) + (balance * (max_hash.clone() - hardness.clone()));
+    
+    // We win if we have a good draw and a big enough fraction of the money
+    draw.value.clone() * mult_factor > hardness * total_money * max_hash.clone()
 }
