@@ -59,7 +59,9 @@ pub const SEED_AGE: i64 = 50;
 // The seed starts being the hash of the genesis block, once we reach block depth 51
 // it will be depth-50, this way the seed is unpredictable
 // we only allow peers to stake if they have had enough money 
-// in the ledger for 50 rounds.
+// in the ledger for 100 rounds, that way they would have to predict the hash in 50 blocks
+// and we consider a rollback of more than 50 blocks very unlikely so it only makes sense 
+// to produce 1 single draw
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Seed {
     pub block_ptr: BlockPtr,

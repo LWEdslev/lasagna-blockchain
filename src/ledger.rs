@@ -113,7 +113,7 @@ impl Ledger {
             return false;
         };
 
-        at_depth - publ_depth > SEED_AGE
+        at_depth - publ_depth > 2 * SEED_AGE
     }
 
     pub fn get_total_money_in_ledger(&self) -> MiniLas {
