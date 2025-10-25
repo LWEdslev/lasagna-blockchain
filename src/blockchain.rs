@@ -1,21 +1,15 @@
-use std::{
-    clone,
-    collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 
 use num_bigint::BigUint;
-use rand::rand_core::block;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     block::Block,
-    draw::{self, Draw, SEED_AGE, Seed},
+    draw::{Draw, SEED_AGE, Seed},
     keys::{PublicKey, SecretKey},
-    ledger::{self, Ledger},
-    transaction::{self, Transaction},
-    util::{
-        BlockPtr, MiniLas, START_TIME, Sha256Hash, Timeslot, calculate_timeslot, get_unix_timestamp,
-    },
+    ledger::Ledger,
+    transaction::Transaction,
+    util::{BlockPtr, MiniLas, START_TIME, Sha256Hash, calculate_timeslot},
 };
 use anyhow::{Result, anyhow};
 
@@ -125,9 +119,67 @@ impl Blockchain {
     }
 
     fn verify_other_winner(&self, block: &Block) -> Result<()> {
-        // If this is not a direct extension of the best path
+        // If this is a direct extension of the best path we have the correct ledger
+        if self.best_path_head()
+            == &self
+                .get_parent(&block.ptr())
+                .ok_or(anyhow!("No parent"))?
+                .ptr()
+        {
+            if is_winner(
+                &self.ledger,
+                block.draw.clone(),
+                &block.draw.signed_by,
+                block.depth,
+            ) {
+                return Ok(());
+            }
+            return Err(anyhow!("Direct extension, not winner"));
+        }
+
         // Otherwise must rollback the entire ledger to the other block
-        todo!()
+        let common = self
+            .find_common_ancestor(self.best_path_head().clone(), block.ptr())
+            .ok_or(anyhow!("no common ancestor"))?
+            .clone();
+        let mut track_ledger = self.ledger.clone();
+
+        let mut from = self.best_path_head().clone();
+        while from != common {
+            let from_block = self
+                .get_block(&from)
+                .ok_or(anyhow!("Invalid block deref"))?;
+            let amount = self.calculate_reward(from_block);
+            let winner = &from_block.draw.signed_by;
+            track_ledger.rollback_reward(winner, amount);
+            let depth = from_block.depth;
+            for t in from_block.transactions.iter() {
+                track_ledger.rollback_transaction(t, depth);
+            }
+
+            from = self.get_parent(&from).ok_or(anyhow!("no parent"))?.ptr();
+        }
+
+        // Reapply but first find the path
+        let mut path = Vec::new();
+        let mut to = block.ptr();
+        while to != common {
+            path.push(to.clone());
+            to = self.get_parent(&to).ok_or(anyhow!("no parent"))?.ptr();
+        }
+
+        // Now we apply
+        while let Some(block_ptr) = path.pop() {
+            let block_to_apply = self.get_block(&block_ptr).ok_or(anyhow!("No block"))?;
+            let amount = self.calculate_reward(block_to_apply);
+            for t in block_to_apply.transactions.iter() {
+                track_ledger.process_transaction(t, block_to_apply.depth)?;
+            }
+
+            track_ledger.reward_winner(&block_to_apply.draw.signed_by, amount);
+        }
+
+        Ok(())
     }
 
     pub fn can_block_be_added(&self, block: &Block) -> Result<()> {
@@ -205,7 +257,7 @@ impl Blockchain {
             self.best_path.push(block_ptr.clone());
         } else if block > *self.get_block(&old_best_path).expect("unreachable") {
             // This block is the new best one and we must rollback
-            self.rollback(&old_best_path, &block_ptr);
+            self.rollback(&old_best_path, &block_ptr)?;
         }
 
         // Check if this block has any orphans. If yes, add them after

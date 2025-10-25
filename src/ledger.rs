@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    blockchain::{BLOCK_REWARD, TRANSACTION_FEE}, draw::SEED_AGE, keys::PublicKey, transaction::Transaction, util::{MiniLas, Sha256Hash}
+    blockchain::TRANSACTION_FEE, draw::SEED_AGE, keys::PublicKey, transaction::Transaction, util::{MiniLas, Sha256Hash}
 };
 use anyhow::{anyhow, Result};
 
