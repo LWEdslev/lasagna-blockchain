@@ -59,7 +59,7 @@ impl Block {
 
     pub fn verify_transactions(&self, prev_transactions: &HashSet<Sha256Hash>) -> Result<()> {
         if !self.transactions.iter().all(|t| {
-            t.verify_signature().is_ok() && !prev_transactions.contains(&t.hash)
+            t.verify_signatures().is_ok() && !prev_transactions.contains(&t.hash)
         }) {
             return Err(anyhow!("Unable to verify some signatures"))
         }

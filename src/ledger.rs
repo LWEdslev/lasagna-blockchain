@@ -29,8 +29,8 @@ impl Ledger {
         }
     }
 
-    pub fn process_transaction(&mut self, transaction: &Transaction, depth: i64) -> Result<()> {
-        transaction.verify_signature()?;        
+/*     pub fn process_transaction(&mut self, transaction: &Transaction, depth: i64) -> Result<()> {
+        transaction.verify_signatures()?;        
         
         let amount = transaction.amount;
         
@@ -84,7 +84,7 @@ impl Ledger {
             }
         }
     }
-
+ */
     pub fn reward_winner(&mut self, winner: &PublicKey, amount: MiniLas) {
         self.map
             .entry(winner.clone())
