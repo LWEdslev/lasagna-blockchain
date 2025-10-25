@@ -35,7 +35,7 @@ impl Blockchain {
         if depth < SEED_AGE && depth > 0 {
             // Block is close to genesis and must have the same seed as the genesis block
             let genesis_block_ptr = &self.best_path[0];
-            let genesis_block = self.get_block(&genesis_block_ptr).unwrap();
+            let genesis_block = self.get_block(&genesis_block_ptr).ok_or_else(|| anyhow!("Could not find genesis block"))?;
             let genesis_seed = &genesis_block.draw.seed;
 
             if block_seed != genesis_seed {
@@ -45,7 +45,7 @@ impl Blockchain {
             // Block seed should be the hash of the block from 50 rounds ago
             let seed_depth = (depth - SEED_AGE) as usize;
             let seed_block_ptr = &self.best_path[seed_depth];
-            let seed_block = &self.get_block(seed_block_ptr).unwrap();
+            let seed_block = &self.get_block(seed_block_ptr).ok_or_else(|| anyhow!("Could not find seed block"))?;
 
             let seed = Seed{
                 block_ptr: BlockPtr { hash: seed_block.hash, depth: depth }
