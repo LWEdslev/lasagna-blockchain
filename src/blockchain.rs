@@ -87,7 +87,7 @@ impl Blockchain {
         };
 
         // Check if timeslot is valid
-        if &block <= parent_block || block.timeslot > self.calculate_timeslot() {
+        if block.timeslot <= parent_block.timeslot || block.timeslot > self.calculate_timeslot() {
             return Err(anyhow!("Invalid timeslot"))
         }
 
@@ -142,7 +142,9 @@ impl Blockchain {
         }
 
         // Return whether the best_path has been updated
-        (&old_best_path != self.best_path_head()).then_some(()).ok_or_else(|| anyhow!("Best path not updated"))
+        (&old_best_path != self.best_path_head())
+        .then_some(())
+        .ok_or_else(|| anyhow!("Best path not updated"))
     }
 
     pub fn rollback(&mut self, from: &BlockPtr, to: &BlockPtr) {
