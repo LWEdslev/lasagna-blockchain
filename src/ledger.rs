@@ -100,6 +100,8 @@ impl Ledger {
         *from_balance += amount + TRANSACTION_FEE;
         let to_balance = self.map.get_mut(from).unwrap();
         *to_balance -= amount;
+
+        self.previous_transactions.remove(&transaction.hash);
         
         if let Some(published_at) = self.published_accounts.get(to) {
             let published_at = *published_at;
@@ -116,10 +118,10 @@ impl Ledger {
             .or_insert(0);
     }
 
-    pub fn rollback_reward(&mut self, winner: &PublicKey) {
+    pub fn rollback_reward(&mut self, winner: &PublicKey, amount: MiniLas) {
         self.add_acount_if_absent(winner);
         let balance = self.map.get_mut(winner).unwrap();
-        *balance -= BLOCK_REWARD;
+        *balance -= amount;
     }
 
     pub fn add_acount_if_absent(&mut self, account: &PublicKey) {

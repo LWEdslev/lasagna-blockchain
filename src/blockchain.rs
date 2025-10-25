@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    clone,
+    collections::{HashMap, HashSet},
+};
 
 use num_bigint::BigUint;
 use rand::rand_core::block;
@@ -6,11 +9,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     block::Block,
-    draw::{self, Draw, Seed, SEED_AGE},
+    draw::{self, Draw, SEED_AGE, Seed},
     keys::{PublicKey, SecretKey},
     ledger::{self, Ledger},
     transaction::{self, Transaction},
-    util::{calculate_timeslot, get_unix_timestamp, BlockPtr, MiniLas, Sha256Hash, Timeslot, START_TIME},
+    util::{
+        BlockPtr, MiniLas, START_TIME, Sha256Hash, Timeslot, calculate_timeslot, get_unix_timestamp,
+    },
 };
 use anyhow::{Result, anyhow};
 
@@ -70,14 +75,16 @@ impl Blockchain {
     pub fn best_path_head(&self) -> &BlockPtr {
         self.best_path.last().expect("no blocks in best path")
     }
-    
+
     fn check_seed(&self, block: &Block) -> Result<()> {
         let block_seed = &block.draw.seed;
         let depth = block.depth;
         if depth < SEED_AGE && depth > 0 {
             // Block is close to genesis and must have the same seed as the genesis block
             let genesis_block_ptr = &self.best_path[0];
-            let genesis_block = self.get_block(&genesis_block_ptr).ok_or_else(|| anyhow!("Could not find genesis block"))?;
+            let genesis_block = self
+                .get_block(&genesis_block_ptr)
+                .ok_or_else(|| anyhow!("Could not find genesis block"))?;
             let genesis_seed = &genesis_block.draw.seed;
 
             if block_seed != genesis_seed {
@@ -87,10 +94,15 @@ impl Blockchain {
             // Block seed should be the hash of the block from 50 rounds ago
             let seed_depth = (depth - SEED_AGE) as usize;
             let seed_block_ptr = &self.best_path[seed_depth];
-            let seed_block = &self.get_block(seed_block_ptr).ok_or_else(|| anyhow!("Could not find seed block"))?;
+            let seed_block = &self
+                .get_block(seed_block_ptr)
+                .ok_or_else(|| anyhow!("Could not find seed block"))?;
 
-            let seed = Seed{
-                block_ptr: BlockPtr { hash: seed_block.hash, depth: depth }
+            let seed = Seed {
+                block_ptr: BlockPtr {
+                    hash: seed_block.hash,
+                    depth: depth,
+                },
             };
 
             if block_seed != &seed {
@@ -106,6 +118,15 @@ impl Blockchain {
     }
 
     pub fn add_transaction(&mut self, transaction: Transaction) -> Result<()> {
+        transaction.verify_signature()?;
+        self.ledger.is_transaction_valid(&transaction)?;
+        self.transaction_buffer.insert(transaction);
+        Ok(())
+    }
+
+    fn verify_other_winner(&self, block: &Block) -> Result<()> {
+        // If this is not a direct extension of the best path
+        // Otherwise must rollback the entire ledger to the other block
         todo!()
     }
 
@@ -114,18 +135,18 @@ impl Blockchain {
 
         for t in block.transactions.iter() {
             self.ledger.is_transaction_valid(t)?
-        } 
+        }
         self.check_seed(&block)?;
 
         if block.timeslot > calculate_timeslot(START_TIME) {
-            return Err(anyhow!("Invalid timeslot"))
+            return Err(anyhow!("Invalid timeslot"));
         }
 
         let parent = self.get_parent(&block.ptr());
 
         if let Some(parent) = parent {
-            if  block.timeslot <= parent.timeslot {
-                return Err(anyhow!("Invalid timeslot in relation to parents"))
+            if block.timeslot <= parent.timeslot {
+                return Err(anyhow!("Invalid timeslot in relation to parents"));
             }
 
             if parent.hash == block.hash {
@@ -133,6 +154,7 @@ impl Blockchain {
             }
         }
 
+        self.verify_other_winner(block)?;
 
         Ok(())
     }
@@ -144,7 +166,7 @@ impl Blockchain {
         let parent_block = self.get_parent(&block.ptr());
         let Some(_) = parent_block else {
             // This block is an orphan
-            if let Some(orphans) = self.orphans.get_mut(&block.prev_hash){
+            if let Some(orphans) = self.orphans.get_mut(&block.prev_hash) {
                 orphans.push(block);
             } else {
                 self.orphans.insert(block.prev_hash, vec![block]);
@@ -152,18 +174,22 @@ impl Blockchain {
             return Ok(());
         };
 
-
         while block.depth as usize >= self.blocks.len() {
             // Create empty hashmaps if the block is in the future, this will usually just be done once
             self.blocks.push(HashMap::new());
         }
 
         // Add block to the chain
-        self.blocks.get_mut(block.depth as usize).expect("unreachable").insert(block.hash, block.clone());
+        self.blocks
+            .get_mut(block.depth as usize)
+            .expect("unreachable")
+            .insert(block.hash, block.clone());
 
- 
         let block_ptr = &block.ptr();
-        let parent_ptr = self.get_parent(block_ptr).expect("no parent but we are not in orphan case").ptr();
+        let parent_ptr = self
+            .get_parent(block_ptr)
+            .expect("no parent but we are not in orphan case")
+            .ptr();
         let old_best_path = self.best_path_head().clone();
 
         if old_best_path == parent_ptr {
@@ -174,7 +200,8 @@ impl Blockchain {
             }
 
             self.proccess_transactions(&block.transactions, block.depth)?;
-            self.ledger.reward_winner(&block.draw.signed_by, self.calculate_reward(&block));
+            self.ledger
+                .reward_winner(&block.draw.signed_by, self.calculate_reward(&block));
             self.best_path.push(block_ptr.clone());
         } else if block > *self.get_block(&old_best_path).expect("unreachable") {
             // This block is the new best one and we must rollback
@@ -191,12 +218,101 @@ impl Blockchain {
         Ok(())
     }
 
-    pub fn rollback(&mut self, from: &BlockPtr, to: &BlockPtr) {
-        todo!()
+    pub fn rollback(&mut self, from: &BlockPtr, to: &BlockPtr) -> Result<()> {
+        // Now we are at from, we must first find the common ancestor of from and to
+        let common = self
+            .find_common_ancestor(from.clone(), to.clone())
+            .ok_or(anyhow!("No common ancestor of the rollback"))?;
+
+        // Revert from `from` to `common`
+        let mut from = from.clone();
+        while from != common {
+            self.rollback_block(&from)?;
+            from = self.get_parent(&from).ok_or(anyhow!("no parent"))?.ptr();
+        }
+
+        // Apply from `common` to `to`
+        // First we travers from `to` to `common`` to get the path to add
+        let mut path = Vec::new();
+        let mut to = to.clone();
+        while to != common {
+            path.push(to.clone());
+            to = self.get_parent(&to).ok_or(anyhow!("no parent"))?.ptr();
+        }
+
+        // Now we apply
+        while let Some(block_ptr) = path.pop() {
+            let block_to_add = self.get_block(&block_ptr).ok_or(anyhow!("No block"))?;
+            self.add_block(block_to_add.clone())?;
+        }
+
+        Ok(())
+    }
+
+    fn rollback_block(&mut self, block_ptr: &BlockPtr) -> Result<()> {
+        if block_ptr != self.best_path_head() {
+            return Err(anyhow!("Cannot rollback a block that is not best"));
+        }
+
+        self.best_path
+            .pop()
+            .ok_or(anyhow!("Cannot rollback genesis"))?;
+
+        let block = self
+            .get_block(block_ptr)
+            .ok_or(anyhow!("Cannot rollback a block that doesn't exist"))?
+            .clone();
+        for t in block.transactions.iter().rev() {
+            self.ledger.rollback_transaction(t, block.depth);
+        }
+
+        self.ledger
+            .rollback_reward(&block.draw.signed_by, self.calculate_reward(&block));
+
+        Ok(())
+    }
+
+    fn find_common_ancestor(&self, mut left: BlockPtr, mut right: BlockPtr) -> Option<BlockPtr> {
+        while left.depth < right.depth {
+            right = self.get_parent(&right)?.ptr();
+        }
+
+        while right.depth < left.depth {
+            left = self.get_parent(&left)?.ptr();
+        }
+
+        // Now left and right are at the same depth
+        // Thus we can move to each of their parents until they are equal
+        while left != right {
+            left = self.get_parent(&left)?.ptr();
+            right = self.get_parent(&right)?.ptr();
+
+            if left.depth == 0 || right.depth == 0 {
+                return None;
+            }
+        }
+
+        // now left == right, we have found the common ancestor
+        Some(left)
     }
 
     pub fn make_block(&self, sk: &SecretKey) -> Block {
-        todo!()
+        let depth = self.best_path_head().depth;
+        let timeslot = calculate_timeslot(START_TIME);
+        let prev_hash = self.best_path_head().hash;
+        let transactions = self.transaction_buffer.clone().into_iter().collect();
+        let seed = {
+            if depth >= SEED_AGE {
+                Seed {
+                    block_ptr: self.best_path[(depth - SEED_AGE) as usize].clone(),
+                }
+            } else {
+                let genesis_block = self.get_block(&self.best_path[0]).unwrap();
+                genesis_block.draw.seed.clone()
+            }
+        };
+        let block = Block::new(timeslot, prev_hash, depth, transactions, sk, seed);
+        block
     }
 
     pub fn get_block(&self, ptr: &BlockPtr) -> Option<&Block> {
@@ -219,11 +335,14 @@ impl Blockchain {
             if blocks.len() == 1 {
                 BlockPtr::new(blocks.next().unwrap().hash, 0)
             } else {
-                return Err(anyhow!("There are too many blocks in genesis depth"))
+                return Err(anyhow!("There are too many blocks in genesis depth"));
             }
         };
 
-        let genesis_block = self.get_block(&genesis_block).ok_or(anyhow!("No genesis block"))?.clone();
+        let genesis_block = self
+            .get_block(&genesis_block)
+            .ok_or(anyhow!("No genesis block"))?
+            .clone();
 
         // We take all the blocks and add them to a new blockchain, if we get the same then it is ok
         let mut track_blockchain = Blockchain::start(self.root_accounts.clone(), genesis_block);
@@ -244,7 +363,11 @@ impl Blockchain {
 
         for transaction in self.transaction_buffer.iter() {
             transaction.verify_signature()?;
-            if self.ledger.previous_transactions.contains(&transaction.hash) {
+            if self
+                .ledger
+                .previous_transactions
+                .contains(&transaction.hash)
+            {
                 return Err(anyhow!("Transaction both in prev and in buffer"));
             }
         }
@@ -260,11 +383,11 @@ impl Blockchain {
         block.transactions.len() as MiniLas * TRANSACTION_FEE + BLOCK_REWARD
     }
 
-    fn proccess_transactions(&mut self, transactions: &Vec<Transaction>, depth: i64) -> Result<()>{
+    fn proccess_transactions(&mut self, transactions: &Vec<Transaction>, depth: i64) -> Result<()> {
         for t in transactions.iter() {
             self.ledger.process_transaction(t, depth)?;
         }
-        Ok(())    
+        Ok(())
     }
 }
 
