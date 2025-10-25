@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 // You must have this much and h SEED_AGE blocks to be considered stakable
 pub const MINIMUM_STAKE_AMOUNT: MiniLas = 10_000000;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Ledger {
     pub map: HashMap<PublicKey, MiniLas>,
     pub previous_transactions: HashSet<Sha256Hash>,
