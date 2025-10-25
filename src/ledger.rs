@@ -29,6 +29,30 @@ impl Ledger {
         }
     }
 
+    pub fn is_transaction_valid(&self, transaction: &Transaction) -> Result<()> {
+        transaction.verify_signature()?;        
+        
+        let amount = transaction.amount;
+        
+        if amount < TRANSACTION_FEE {
+            return Err(anyhow!("Cannot send less than transaction fee. Tried to send {}, fee {}", transaction.amount, TRANSACTION_FEE));
+        }
+
+        let from = &transaction.from;
+
+        let from_balance = self.get_balance(from);
+
+        if from_balance < amount + TRANSACTION_FEE {
+            return Err(anyhow!("Cannot send more than in account, including transaction fee"));
+        }
+
+        if self.previous_transactions.contains(&transaction.hash) {
+            return Err(anyhow!("Transaction was executed previously"));
+        }
+
+        Ok(())
+    }
+
     pub fn process_transaction(&mut self, transaction: &Transaction, depth: i64) -> Result<()> {
         transaction.verify_signature()?;        
         

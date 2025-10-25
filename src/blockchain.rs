@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     block::Block,
-    draw::{self, Draw, Seed},
+    draw::{self, Draw, Seed, SEED_AGE},
     keys::{PublicKey, SecretKey},
     ledger::{self, Ledger},
     transaction::{self, Transaction},
-    util::{BlockPtr, MiniLas, Sha256Hash, START_TIME},
+    util::{calculate_timeslot, get_unix_timestamp, BlockPtr, MiniLas, Sha256Hash, Timeslot, START_TIME},
 };
 use anyhow::{Result, anyhow};
 
@@ -26,7 +26,6 @@ pub struct Blockchain {
     pub root_accounts: Vec<PublicKey>,
     pub orphans: HashMap<Sha256Hash, Vec<Block>>,
     pub transaction_buffer: HashSet<Transaction>,
-    pub prev_transactions: HashSet<Sha256Hash>,
     start_time: u128,
 }
 
@@ -64,7 +63,6 @@ impl Blockchain {
             root_accounts,
             orphans: Default::default(),
             transaction_buffer: Default::default(),
-            prev_transactions: Default::default(),
             start_time: START_TIME,
         }
     }
@@ -73,7 +71,7 @@ impl Blockchain {
         self.best_path.last().expect("no blocks in best path")
     }
     
-    fn check_seed(&self, block: &Block) -> Result<bool> {
+    fn check_seed(&self, block: &Block) -> Result<()> {
         let block_seed = &block.draw.seed;
         let depth = block.depth;
         if depth < SEED_AGE && depth > 0 {
@@ -83,7 +81,7 @@ impl Blockchain {
             let genesis_seed = &genesis_block.draw.seed;
 
             if block_seed != genesis_seed {
-                return Ok(false);
+                return Err(anyhow!("seed mismatch"));
             }
         } else {
             // Block seed should be the hash of the block from 50 rounds ago
@@ -96,11 +94,11 @@ impl Blockchain {
             };
 
             if block_seed != &seed {
-                return Ok(false);
+                return Err(anyhow!("seed mismatch"));
             }
         }
 
-        Ok(true)
+        Ok(())
     }
 
     pub fn stake(&self, draw: Draw, wallet: &PublicKey, depth: i64) -> bool {
@@ -111,84 +109,86 @@ impl Blockchain {
         todo!()
     }
 
-    pub fn add_block(&mut self, block: Block) -> Result<()> {
-        // Check if signature is valid
+    pub fn can_block_be_added(&self, block: &Block) -> Result<()> {
         block.verify_signature()?;
 
+        for t in block.transactions.iter() {
+            self.ledger.is_transaction_valid(t)?
+        } 
+        self.check_seed(&block)?;
+
+        if block.timeslot > calculate_timeslot(START_TIME) {
+            return Err(anyhow!("Invalid timeslot"))
+        }
+
+        let parent = self.get_parent(&block.ptr());
+
+        if let Some(parent) = parent {
+            if  block.timeslot <= parent.timeslot {
+                return Err(anyhow!("Invalid timeslot in relation to parents"))
+            }
+
+            if parent.hash == block.hash {
+                return Err(anyhow!("Duplicate hash"));
+            }
+        }
+
+
+        Ok(())
+    }
+
+    pub fn add_block(&mut self, block: Block) -> Result<()> {
+        self.can_block_be_added(&block)?;
+
         // Check if the prev_block is valid
-        let depth = block.depth as usize;
-        let parent_hash = block.prev_hash;
-        let parent_ptr = BlockPtr{hash: parent_hash, depth: block.depth - 1};
-        let parent_block = Self::get_block(&self, &parent_ptr);
-        let Some(parent_block) = parent_block else {
+        let parent_block = self.get_parent(&block.ptr());
+        let Some(_) = parent_block else {
             // This block is an orphan
             if let Some(orphans) = self.orphans.get_mut(&block.prev_hash){
                 orphans.push(block);
             } else {
                 self.orphans.insert(block.prev_hash, vec![block]);
             }
-            return Err(anyhow!("No parent was found to the block"));
+            return Ok(());
         };
 
-        // Check if timeslot is valid
-        if block.timeslot <= parent_block.timeslot || block.timeslot > self.calculate_timeslot() {
-            return Err(anyhow!("Invalid timeslot"))
-        }
 
-        // Check if seed is valid
-        if !self.check_seed(&block)?{
-            return Err(anyhow!("Invalid seed"))
-        }
-
-        while depth >= self.blocks.len() {
+        while block.depth as usize >= self.blocks.len() {
             // Create empty hashmaps if the block is in the future, this will usually just be done once
             self.blocks.push(HashMap::new());
         }
 
         // Add block to the chain
-        self.blocks.get_mut(depth).expect("unreachable").insert(block.hash, block.clone());
+        self.blocks.get_mut(block.depth as usize).expect("unreachable").insert(block.hash, block.clone());
 
-        // Remove transactions from the block from the transaction buffer
-        for t in block.transactions.iter() {
-            self.transaction_buffer.remove(t);
-        }
-
-        let block_ptr = BlockPtr{ hash: block.hash, depth: block.depth };
+ 
+        let block_ptr = &block.ptr();
+        let parent_ptr = self.get_parent(block_ptr).expect("no parent but we are not in orphan case").ptr();
         let old_best_path = self.best_path_head().clone();
 
-        if block.depth > old_best_path.depth {
-            // This is the new best path
-            if old_best_path.hash != parent_hash {
-                // Rollback if we branch change
-                self.rollback(&old_best_path, &block_ptr);
-            } else {
-                self.proccess_transactions(&block.transactions, block.depth);
-                self.ledger.reward_winner(&block.draw.signed_by, BLOCK_REWARD);
-                self.best_path.push(block_ptr);
+        if old_best_path == parent_ptr {
+            // This is an extension of the best path
+            // Remove transactions from the block from the transaction buffer
+            for t in block.transactions.iter() {
+                self.transaction_buffer.remove(t);
             }
-        } else if block.depth == old_best_path.depth {
-            let new_block = &block;
-            let curr_best_block = self.blocks[old_best_path.depth as usize]
-            .get(&old_best_path.hash)
-            .ok_or_else(|| anyhow!("Could not find old best block"))?;
-            
-            if new_block > curr_best_block {
-                self.rollback(&old_best_path, &block_ptr);
-            }
+
+            self.proccess_transactions(&block.transactions, block.depth)?;
+            self.ledger.reward_winner(&block.draw.signed_by, self.calculate_reward(&block));
+            self.best_path.push(block_ptr.clone());
+        } else if block > *self.get_block(&old_best_path).expect("unreachable") {
+            // This block is the new best one and we must rollback
+            self.rollback(&old_best_path, &block_ptr);
         }
 
         // Check if this block has any orphans. If yes, add them after
         if let Some(orphans) = self.orphans.remove(&block.hash) {
             for orphan in orphans {
-                let res = self.add_block(orphan.clone());
-                println!("added orphan, result = {:?}", res);
+                self.add_block(orphan.clone())?;
             }
         }
 
-        // Return whether the best_path has been updated
-        (&old_best_path != self.best_path_head())
-        .then_some(())
-        .ok_or_else(|| anyhow!("Best path not updated"))
+        Ok(())
     }
 
     pub fn rollback(&mut self, from: &BlockPtr, to: &BlockPtr) {
@@ -244,7 +244,7 @@ impl Blockchain {
 
         for transaction in self.transaction_buffer.iter() {
             transaction.verify_signature()?;
-            if self.prev_transactions.contains(&transaction.hash) {
+            if self.ledger.previous_transactions.contains(&transaction.hash) {
                 return Err(anyhow!("Transaction both in prev and in buffer"));
             }
         }
@@ -260,17 +260,11 @@ impl Blockchain {
         block.transactions.len() as MiniLas * TRANSACTION_FEE + BLOCK_REWARD
     }
 
-    pub fn calculate_timeslot(&self) -> Timeslot {
-        let now = get_unix_timestamp();
-        let start = self.start_time;
-        let timeslot = (now - start) / SLOT_LENGTH;
-        timeslot as _
-    }
-
-    fn proccess_transactions(&mut self, transactions: &Vec<Transaction>, depth: i64) {
+    fn proccess_transactions(&mut self, transactions: &Vec<Transaction>, depth: i64) -> Result<()>{
         for t in transactions.iter() {
-            self.ledger.process_transaction(t, depth);
+            self.ledger.process_transaction(t, depth)?;
         }
+        Ok(())    
     }
 }
 
