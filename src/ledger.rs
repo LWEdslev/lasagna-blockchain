@@ -115,7 +115,7 @@ impl Ledger {
         self.map
             .entry(winner.clone())
             .and_modify(|minilas| *minilas += amount)
-            .or_insert(0);
+            .or_insert(amount);
     }
 
     pub fn rollback_reward(&mut self, winner: &PublicKey, amount: MiniLas) {
