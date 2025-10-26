@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use crate::{keys::PublicKey, util::MiniLas};
 
 #[derive(Default)]
-pub struct Journal {
-    balances: HashMap<PublicKey, Option<u64>>,
+pub struct Snapshot {
+    pub balances: HashMap<PublicKey, Option<u64>>,
 }
 
-impl Journal {
+impl Snapshot {
     pub fn new() -> Self {
         Self { balances: HashMap::new() }
     }

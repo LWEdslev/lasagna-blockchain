@@ -1,25 +1,23 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, ensure, Result};
 
 use crate::{instruction::{CompiledInstruction, Instruction}, keys::{PublicKey, SecretKey}, message, util::Sha256Hash};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct TransactionMessageHeader{
     pub num_required_signatures: u8,
+    pub num_required_public_keys: u8,
 }
 
 impl TransactionMessageHeader{
-    pub fn new() -> Self {
-        Self { num_required_signatures: 0 }
-    }
-
-    pub fn from_instructions(instructions: &Vec<CompiledInstruction>) -> Self {
+    pub fn new(instructions: &Vec<CompiledInstruction>, num_required_public_keys: u8) -> Self {
         let num_instructions = instructions.len();
 
         Self{
-            num_required_signatures: (num_instructions + 1) as u8
+            num_required_signatures: (num_instructions + 1) as u8,
+            num_required_public_keys: num_required_public_keys,
         }
     }
 }
@@ -41,10 +39,12 @@ impl TransactionMessage{
         // 1) Canonical account list + index (payer first)
         let mut public_keys: Vec<PublicKey> = Vec::new();
         let mut key_index: HashMap<PublicKey, usize> = HashMap::new();
+        let mut num_required_public_keys: u8 = 0;
         let mut intern = |pk: &PublicKey| -> usize {
             if let Some(&i) = key_index.get(pk) {
                 i
             } else {
+                num_required_public_keys += 1;
                 let i = public_keys.len() as usize;
                 public_keys.push(pk.clone());
                 key_index.insert(pk.clone(), i);
@@ -68,7 +68,7 @@ impl TransactionMessage{
             compiled_instructions.push(CompiledInstruction::new(acct_indices, ix));
         }
 
-        let header = TransactionMessageHeader::from_instructions(&compiled_instructions);
+        let header = TransactionMessageHeader::new(&compiled_instructions, num_required_public_keys);
 
         Self {
             header,
@@ -99,6 +99,10 @@ impl TransactionMessage{
     }
 
     pub fn validate_public_keys(&self) -> Result<()> {
+        let num_required_keys = self.header.num_required_public_keys;
+        let actual_key_amount = self.public_keys.len();
+
+        ensure!(num_required_keys as usize == actual_key_amount, "The message contained {} public keys, but expected {}", actual_key_amount, num_required_keys);
         todo!()
     }
 }

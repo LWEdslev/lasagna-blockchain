@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, ensure, Result};
 use ed25519_dalek::ed25519::signature;
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +25,11 @@ impl Transaction {
 
     pub fn verify_signatures(&self) -> Result<()> {
         let message_bytes = &self.message.into_bytes();
+
+        let required_signature_amount = self.message.header.num_required_signatures;
+        let num_signatures = self.signatures.len();
+        println!("Transaction requires {} signatures, but only has {}", required_signature_amount, num_signatures);
+        ensure!(required_signature_amount as usize == num_signatures, "Transaction requires {} signatures, but only has {}", required_signature_amount, num_signatures);
 
         // Verify payer signature
         let payer = self.message.public_keys.get(0).unwrap();
@@ -121,6 +126,52 @@ mod tests {
         let signers = Vec::from([sk1.clone(), sk2.clone()]);
         let message = TransactionMessage::new(payer.clone(), ixs.clone(), test_block_hash);
         let tx = Transaction::new(message, signers).unwrap();
+        
+        assert!(tx.verify_signatures().is_err());
+
+        let signers = Vec::from([sk2, sk1]);
+        let message = TransactionMessage::new(payer, ixs, test_block_hash);
+        let tx = Transaction::new(message, signers).unwrap();
+
+        assert!(tx.verify_signatures().is_err());
+    }
+
+    #[test]
+    fn test_instructions_signature_should_succeed() {
+        let sk1 = SecretKey::generate();
+        let sk2 = SecretKey::generate();
+        let sk3 = SecretKey::generate();
+        let sk4 = SecretKey::generate();
+        let payer = sk1.get_public_key();
+
+        // The signing key is not first in the list, so the test signature cannot be verified
+        let pks = Vec::from([sk1.get_public_key(), sk2.get_public_key()]);
+        let minilas: u64 = 100000;
+
+        let ix = Instruction::new(pks, minilas);
+        let ix2 = Instruction::new(Vec::from([sk3.get_public_key(), sk4.get_public_key()]), minilas);
+        let ix3 = Instruction::new(Vec::from([sk1.get_public_key(), sk4.get_public_key()]), minilas);
+        let ix4 = Instruction::new(Vec::from([sk2.get_public_key(), sk3.get_public_key()]), minilas);
+        let ix5 = Instruction::new(Vec::from([sk3.get_public_key(), sk1.get_public_key()]), minilas);
+        let ix6 = Instruction::new(Vec::from([sk4.get_public_key(), sk2.get_public_key()]), minilas);
+        let ix7 = Instruction::new(Vec::from([sk2.get_public_key(), sk1.get_public_key()]), minilas);
+        let ix8 = Instruction::new(Vec::from([sk3.get_public_key(), sk4.get_public_key()]), minilas);
+        let ix9 = Instruction::new(Vec::from([sk2.get_public_key(), sk4.get_public_key()]), minilas);
+        let ix10 = Instruction::new(Vec::from([sk1.get_public_key(), sk4.get_public_key()]), minilas);
+
+
+
+
+        let ixs = Vec::from([ix, ix2, ix3, ix4, ix5, ix6, ix7, ix8, ix9, ix10]);
+        let test_block_hash = hash(&"recent_block".into_bytes());
+        
+        let signers = Vec::from([sk1.clone(), sk2.clone()]);
+        let message = TransactionMessage::new(payer.clone(), ixs.clone(), test_block_hash);
+        let tx = Transaction::new(message, signers).unwrap();
+
+        println!("required signatures: {}", tx.message.header.num_required_signatures);
+        println!("amount of signatures {}", tx.signatures.len());
+        println!("amount of public keys: {}", tx.message.public_keys.len());
         
         assert!(tx.verify_signatures().is_err());
 

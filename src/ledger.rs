@@ -3,7 +3,7 @@ use std::{any, collections::{HashMap, HashSet}, thread::sleep};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    blockchain::TRANSACTION_FEE, draw::SEED_AGE, instruction::CompiledInstruction, keys::PublicKey, message::{self, TransactionMessage}, transaction::Transaction, util::{MiniLas, Sha256Hash}, journal::{self, Journal}
+    blockchain::TRANSACTION_FEE, draw::SEED_AGE, instruction::CompiledInstruction, keys::PublicKey, message::{self, TransactionMessage}, transaction::Transaction, util::{MiniLas, Sha256Hash}, snapshot::{self, Snapshot}
 };
 use anyhow::{anyhow, ensure, Result};
 
@@ -31,7 +31,7 @@ impl Ledger {
      
     pub fn is_transaction_valid(&self, transaction: &Transaction) -> Result<()> {
         transaction.verify_signatures()?;
-        transaction.message.validate_public_keys();
+        transaction.message.validate_public_keys()?;
 
         if self.previous_transactions.contains(&transaction.hash) {
             return Err(anyhow!("Transaction was executed previously"));
@@ -66,36 +66,27 @@ impl Ledger {
             return Err(anyhow!("Transaction was executed previously"));
         }
 
-        let mut journal = Journal::new();
+        let mut snapshot = Snapshot::new();
 
         for pk in &transaction.message.public_keys {
-            journal.snapshot_balance(&pk, &self.map);
+            snapshot.snapshot_balance(&pk, &self.map);
         }
 
         for ix in &transaction.message.instructions {
-            let result = self.process_instruction(ix, &transaction.message);
+            let result = self.process_instruction(ix, &transaction.message, depth);
             match result {
                 Ok(_) => (),
                 Err(e) => {
-                    self.rollback_journal(&journal);
+                    self.rollback_to_snapshot(&snapshot, transaction);
+                    return Err(anyhow!(e));
                 },
             }
         }
 
-/*         *from_balance -= amount + TRANSACTION_FEE;
-        
-        let to_balance = self.map.get_mut(to).unwrap();
-        *to_balance += amount;
-
-        // If `to` has not been published we must check if they have enough in their account for a publish
-        if !self.published_accounts.contains_key(to) && *to_balance >= MINIMUM_STAKE_AMOUNT {
-            self.published_accounts.insert(to.clone(), depth);
-        } */
-
         Ok(())
     }
 
-    fn process_instruction(&mut self, instruction: &CompiledInstruction, message: &TransactionMessage) -> Result<()>{
+    fn process_instruction(&mut self, instruction: &CompiledInstruction, message: &TransactionMessage, depth: i64) -> Result<()>{
         let from_idx = instruction.public_keys_index.get(0).unwrap();
         let to_idx = instruction.public_keys_index.get(1).unwrap();
 
@@ -113,12 +104,34 @@ impl Ledger {
 
         *from_balance -= instruction.amount;
 
+        let to_balance = self.map.get_mut(to).unwrap();
+        
+        *to_balance += instruction.amount;
+
+        // If `to` has not been published we must check if they have enough in their account for a publish
+        if !self.published_accounts.contains_key(to) && *to_balance >= MINIMUM_STAKE_AMOUNT {
+            self.published_accounts.insert(to.clone(), depth);
+        }
+
 
         Ok(())
     }
 
-    fn rollback_journal(&mut self, journal: &Journal){
+    fn rollback_to_snapshot(&mut self, snapshot: &Snapshot, transaction: &Transaction){
+        for (pk, amount) in &snapshot.balances {
+            match amount {
+                Some(a) => {
+                    let balance = self.map.get_mut(pk).unwrap();
+                    *balance = *a
+                },
+                None => {
+                    self.published_accounts.remove(pk);
+                }
+            }
+            
+        }
 
+        self.previous_transactions.remove(&transaction.hash);
     }
 
     pub fn rollback_transaction(&mut self, transaction: &Transaction, depth: i64) {
