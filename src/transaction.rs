@@ -1,36 +1,38 @@
 use anyhow::{anyhow, ensure, Result};
-use ed25519_dalek::ed25519::signature;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    instruction::{self, Instruction}, keys::{PublicKey, SecretKey, Signature}, message::{self, TransactionMessage}, util::{hash, SerToBytes, Sha256Hash}
+    instruction::{Instruction}, keys::{SecretKey, Signature}, message::{TransactionMessage}, util::{hash, SerToBytes, Sha256Hash}
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct Transaction {
     pub hash: Sha256Hash,
+    pub nonce: u64,
     pub message: TransactionMessage,
-    pub signatures: Vec<Signature> // The first signature is the payer for the transaction and does not need to appear in any instruction
+    // A list of signatures required by the instructions. For each instruction, the sender will need to sign the message
+    // The signature on index 0 is signed by the payer of the transaction and does not need to appear in any instruction
+    pub signatures: Vec<Signature>
 }
 
 impl Transaction {
-    pub fn new(signers: Vec<SecretKey>, instructions: &Vec<Instruction>, recent_blockhash: Sha256Hash) -> Result<Self> {
+    pub fn new(signers: Vec<SecretKey>, instructions: &Vec<Instruction>, nonce: u64) -> Result<Self> {
         let mut signer_public_keys = Vec::new();
         for signer in &signers {
             signer_public_keys.push(signer.get_public_key());
         }
         
-        let message = TransactionMessage::new(&signers, instructions, recent_blockhash);
-        let message_bytes = message.into_bytes();
+        let message = TransactionMessage::new(&signers, instructions);
+        let message_bytes = (&message, nonce).into_bytes();
         let signatures: Vec<Signature> = signers.iter().map(|sk| Signature::sign(sk, &message_bytes)).collect();
         
         let hash = hash(&(message_bytes, signatures.clone()).into_bytes());
 
-        Ok(Self{ hash, message, signatures })
+        Ok(Self{ hash, message, signatures, nonce })
     }
 
     pub fn verify_signatures(&self) -> Result<()> {
-        let message_bytes = &self.message.into_bytes();
+        let message_bytes = (&self.message, self.nonce).into_bytes();
 
         let required_signature_amount = self.message.header.num_required_signatures;
         let num_signatures = self.signatures.len();
@@ -39,16 +41,16 @@ impl Transaction {
         println!("made it through");
 
         // Verify payer signature
-        let payer = self.message.public_keys.get(0).unwrap();
+        let payer = self.message.accounts.get(0).unwrap();
         let payer_signature = self.signatures.get(0).unwrap();
         payer_signature.verify(payer, &message_bytes)?;
 
         // Verify instruction signatures
         for (index, instruction) in self.message.instructions.iter().enumerate() {
             println!("{}", index);
-            let pk_index = instruction.public_keys_index.get(0).ok_or_else(|| anyhow!("No signer was provided for instruction"))?;
+            let pk_index = instruction.account_indices.get(0).ok_or_else(|| anyhow!("No signer was provided for instruction"))?;
             println!("pk_index {}", pk_index);
-            let pk = self.message.public_keys.get(*pk_index).ok_or_else(|| anyhow!("No public key was provided for the signer of the instruction"))?;
+            let pk = self.message.accounts.get(*pk_index).ok_or_else(|| anyhow!("No public key was provided for the signer of the instruction"))?;
             let signature = self.signatures.get(*pk_index).ok_or_else(|| anyhow!("No Signature was provided for the signer of the instruction"))?;
             signature.verify(pk, &message_bytes)?;
         }
@@ -67,11 +69,9 @@ mod tests {
     fn test_payer_signature_should_succeed(){
         let sk1 = SecretKey::generate();
         let ixs: Vec<Instruction> = Vec::new();
-        let hash = hash(&"Test".into_bytes());
-
 
         let signers = Vec::from([sk1]);
-        let tx = Transaction::new(signers, &ixs, hash).unwrap();
+        let tx = Transaction::new(signers, &ixs, 1).unwrap();
         
         assert!(!tx.verify_signatures().is_err());
     }
@@ -81,14 +81,13 @@ mod tests {
         let sk1 = SecretKey::generate();
         let sk2 = SecretKey::generate();
         let ixs: Vec<Instruction> = Vec::new();
-        let hash = hash(&"Test".into_bytes());
 
         let signers = Vec::from([sk1]);
-        let mut tx = Transaction::new(signers, &ixs, hash).unwrap();
+        let mut tx = Transaction::new(signers, &ixs, 1).unwrap();
         
         assert!(!tx.verify_signatures().is_err());
 
-        tx.message.public_keys = Vec::from([sk2.get_public_key()]);
+        tx.message.accounts = Vec::from([sk2.get_public_key()]);
 
         assert!(tx.verify_signatures().is_err())
     }
@@ -103,11 +102,10 @@ mod tests {
         let minilas: u64 = 100000;
         let ix = Instruction::new(pks, minilas);
         let ixs = Vec::from([ix]);
-        let test_block_hash = hash(&"recent_block".into_bytes());
         
         // note the payer is first in the list of signers
         let signers = Vec::from([sk1, sk2]);
-        let tx = Transaction::new(signers, &ixs, test_block_hash).unwrap();
+        let tx = Transaction::new(signers, &ixs, 1).unwrap();
         
         assert!(!tx.verify_signatures().is_err())
     }
@@ -122,10 +120,9 @@ mod tests {
         let minilas: u64 = 100000;
         let ix = Instruction::new(pks, minilas);
         let ixs = Vec::from([ix]);
-        let test_block_hash = hash(&"recent_block".into_bytes());
         
         let signers = Vec::from([sk2.clone()]);
-        let tx = Transaction::new(signers, &ixs, test_block_hash).unwrap();
+        let tx = Transaction::new(signers, &ixs, 1).unwrap();
 
         println!("tx {:?}", tx.signatures.len());
         
@@ -133,7 +130,7 @@ mod tests {
 
         // Insert the correct signer (the sender) and the transaction should no longer fail
         let signers = Vec::from([sk1]);
-        let tx = Transaction::new(signers, &ixs, test_block_hash).unwrap();
+        let tx = Transaction::new(signers, &ixs, 1).unwrap();
 
         assert!(!tx.verify_signatures().is_err());
     }
@@ -162,18 +159,16 @@ mod tests {
         let ix10 = Instruction::new(Vec::from([sk1.get_public_key(), sk5.get_public_key()]), minilas);
         let ixs = Vec::from([ix, ix2, ix3, ix4, ix5, ix6, ix7, ix8, ix9, ix10]);
 
-        let test_block_hash = hash(&"recent_block".into_bytes());
-        
         // create transaction, the signer on index 0 is the payer
         let signers = Vec::from([sk1.clone(), sk2.clone(), sk3.clone(), sk4.clone()]);
-        let tx = Transaction::new(signers, &ixs, test_block_hash).unwrap();
+        let tx = Transaction::new(signers, &ixs, 1).unwrap();
 
         assert!(!tx.verify_signatures().is_err());
 
         // Remove one of the senders from the signers list
         // The transaction can no longer be verified because a sender has not signed
         let signers = Vec::from([sk1, sk2, sk3]);
-        let tx = Transaction::new(signers, &ixs, test_block_hash).unwrap();
+        let tx = Transaction::new(signers, &ixs, 1).unwrap();
 
         assert!(tx.verify_signatures().is_err());
 

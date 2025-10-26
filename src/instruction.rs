@@ -5,30 +5,37 @@ use crate::{blockchain::TRANSACTION_FEE, instruction, keys::PublicKey, util::Sha
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct Instruction{
-    pub public_keys: Vec<PublicKey>, // The first public key is the message signer
+    // A list of accounts (public keys) needed to process the instruction
+    // As long as the blockchain only supports native token transfers, this list will only contain 2 accounts
+    // The first account is the sender and the second account is the receiver
+    pub accounts: Vec<PublicKey>,
     pub amount: u64, 
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct CompiledInstruction{
-    pub public_keys_index: Vec<usize>, // The first public key is the message signer
+    // A list of account indexes with the index where to find the public key in the accounts list on the TransactionMessage
+    // As long as the blockchain only supports native token transfers, this list will only contain 2 accounts
+    // The first account is the sender and the second account is the receiver
+    // The index of the sender is also the index where the signatures list on the transaction stores the signature that the sender has signed
+    pub account_indices: Vec<usize>,
     pub amount: u64,
 }
 
 impl Instruction {
     pub fn new(public_keys: Vec<PublicKey>, amount: u64) -> Self {
-        Self { public_keys, amount }
+        Self { accounts: public_keys, amount }
     }
 }
 
 impl CompiledInstruction{
     pub fn new(public_keys_index: Vec<usize>, instruction: &Instruction) -> Self {
-        Self { public_keys_index, amount: instruction.amount }
+        Self { account_indices: public_keys_index, amount: instruction.amount }
     }
 
-    // This validate assumes that instructions can only send LAS, rewrite when more functionality is applied
     pub fn validate(&self) -> Result<()>{
-        let num_pks = self.public_keys_index.len();
+        let num_pks = self.account_indices.len();
+
         if num_pks != 2 {
             return Err(anyhow!("Instructions need to have exactly 2 pks, one for sending and one for receiving"))
         }

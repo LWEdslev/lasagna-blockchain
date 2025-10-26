@@ -1,9 +1,9 @@
-use std::{any, collections::{HashMap, HashSet}, thread::sleep};
+use std::{collections::{HashMap, HashSet}};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    blockchain::TRANSACTION_FEE, draw::SEED_AGE, instruction::CompiledInstruction, keys::PublicKey, message::{self, TransactionMessage}, transaction::Transaction, util::{MiniLas, Sha256Hash}, snapshot::{self, Snapshot}
+    blockchain::TRANSACTION_FEE, draw::SEED_AGE, instruction::CompiledInstruction, keys::PublicKey, message::{TransactionMessage}, transaction::Transaction, util::{MiniLas, Sha256Hash}, snapshot::{Snapshot}
 };
 use anyhow::{anyhow, ensure, Result};
 
@@ -38,7 +38,7 @@ impl Ledger {
         }
 
         for ix in &transaction.message.instructions{
-            let num_pks = ix.public_keys_index.len();
+            let num_pks = ix.account_indices.len();
             if num_pks != 2 {
                 return Err(anyhow!("Instructions need to have exactly 2 pks, one for sending and one for receiving"))
             }
@@ -54,7 +54,7 @@ impl Ledger {
     pub fn process_transaction(&mut self, transaction: &Transaction, depth: i64) -> Result<()> {
         self.is_transaction_valid(transaction)?;
 
-        let payer = transaction.message.public_keys.get(0).unwrap();
+        let payer = transaction.message.accounts.get(0).unwrap();
         self.add_acount_if_absent(payer);
         let payer_balance = self.map.get_mut(payer).unwrap();
 
@@ -69,11 +69,9 @@ impl Ledger {
 
         let mut snapshot = Snapshot::new();
 
-        for pk in &transaction.message.public_keys {
+        for pk in &transaction.message.accounts {
             snapshot.snapshot_balance(&pk, &self.map);
         }
-
-        println!("Snapshot {:?}", snapshot);
 
         for ix in &transaction.message.instructions {
             let result = self.process_instruction(ix, &transaction.message, depth);
@@ -90,11 +88,11 @@ impl Ledger {
     }
 
     fn process_instruction(&mut self, instruction: &CompiledInstruction, message: &TransactionMessage, depth: i64) -> Result<()>{
-        let from_idx = instruction.public_keys_index.get(0).unwrap();
-        let to_idx = instruction.public_keys_index.get(1).unwrap();
+        let from_idx = instruction.account_indices.get(0).unwrap();
+        let to_idx = instruction.account_indices.get(1).unwrap();
 
-        let from = message.public_keys.get(*from_idx).ok_or_else(|| anyhow!("Failed to get sending public key during instruction processing"))?;
-        let to = message.public_keys.get(*to_idx).ok_or_else(|| anyhow!("Failed to get receiving public key during instruction processing"))?;
+        let from = message.accounts.get(*from_idx).ok_or_else(|| anyhow!("Failed to get sending public key during instruction processing"))?;
+        let to = message.accounts.get(*to_idx).ok_or_else(|| anyhow!("Failed to get receiving public key during instruction processing"))?;
 
         self.add_acount_if_absent(from);
         self.add_acount_if_absent(to);
@@ -148,7 +146,7 @@ impl Ledger {
 
         self.previous_transactions.remove(&transaction.hash);
 
-        for pk in &transaction.message.public_keys {
+        for pk in &transaction.message.accounts {
             if let Some(published_at) = self.published_accounts.get(&pk) {
                 let published_at = *published_at;
                 if published_at == depth {
@@ -159,11 +157,11 @@ impl Ledger {
     }
 
     pub fn rollback_instruction(&mut self, instruction: &CompiledInstruction, message: &TransactionMessage) {
-        let from_idx = instruction.public_keys_index.get(0).unwrap();
-        let to_idx = instruction.public_keys_index.get(1).unwrap();
+        let from_idx = instruction.account_indices.get(0).unwrap();
+        let to_idx = instruction.account_indices.get(1).unwrap();
 
-        let from = message.public_keys.get(*from_idx).unwrap();
-        let to = message.public_keys.get(*to_idx).unwrap();
+        let from = message.accounts.get(*from_idx).unwrap();
+        let to = message.accounts.get(*to_idx).unwrap();
         let amount = instruction.amount;
 
         let from_balance = self.map.get_mut(from).unwrap();
@@ -219,7 +217,7 @@ impl Ledger {
 
 #[cfg(test)]
 mod tests {
-    use crate::{instruction::Instruction, keys::SecretKey, util::{hash, SerToBytes}};
+    use crate::{instruction::Instruction, keys::SecretKey};
 
     use super::*;
 
@@ -242,9 +240,8 @@ mod tests {
         let ix = Instruction::new(Vec::from([sk1.get_public_key(), sk2.get_public_key()]), transfered_amount);
         let ixs = Vec::from([ix]);
 
-        let test_block_hash = hash(&"recent_block".into_bytes());
         let signers = Vec::from([sk1.clone()]);
-        let tx = Transaction::new(signers, &ixs, test_block_hash).unwrap();
+        let tx = Transaction::new(signers, &ixs, 1).unwrap();
 
         let result = ledger.process_transaction(&tx, 1);
 
@@ -278,9 +275,8 @@ mod tests {
         let ix2 = Instruction::new(Vec::from([sk1.get_public_key(), sk2.get_public_key()]), transfered_amount2);
         let ixs = Vec::from([ix, ix2]);
 
-        let test_block_hash = hash(&"recent_block".into_bytes());
         let signers = Vec::from([sk1.clone()]);
-        let tx = Transaction::new(signers, &ixs, test_block_hash).unwrap();
+        let tx = Transaction::new(signers, &ixs, 1).unwrap();
 
         let result = ledger.process_transaction(&tx, 1);
 
