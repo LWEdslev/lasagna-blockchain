@@ -53,13 +53,11 @@ impl Ledger {
 
     pub fn process_transaction(&mut self, transaction: &Transaction, depth: i64) -> Result<()> {
         self.is_transaction_valid(transaction)?;
-        println!("validated tx");
 
         let payer = transaction.message.public_keys.get(0).unwrap();
         self.add_acount_if_absent(payer);
         let payer_balance = self.map.get_mut(payer).unwrap();
 
-        println!("payed transaction fee {}, {}", payer_balance, TRANSACTION_FEE);
         ensure!(*payer_balance > TRANSACTION_FEE, "Payer does not have enough LAS in account to pay transaction fee");
 
         *payer_balance -= TRANSACTION_FEE;
@@ -74,6 +72,8 @@ impl Ledger {
         for pk in &transaction.message.public_keys {
             snapshot.snapshot_balance(&pk, &self.map);
         }
+
+        println!("Snapshot {:?}", snapshot);
 
         for ix in &transaction.message.instructions {
             let result = self.process_instruction(ix, &transaction.message, depth);
@@ -123,14 +123,16 @@ impl Ledger {
     }
 
     fn rollback_to_snapshot(&mut self, snapshot: &Snapshot, transaction: &Transaction){
+        println!("rolling back");
         for (pk, amount) in &snapshot.balances {
+            println!("{:?}", amount);
             match amount {
                 Some(a) => {
                     let balance = self.map.get_mut(pk).unwrap();
                     *balance = *a
                 },
                 None => {
-                    self.published_accounts.remove(pk);
+                    self.delete_account(pk);
                 }
             }
             
@@ -187,6 +189,11 @@ impl Ledger {
         if !self.map.contains_key(account) {
             self.map.insert(account.clone(), 0);
         }
+    }
+
+    pub fn delete_account(&mut self, account: &PublicKey){
+        self.published_accounts.remove(account);
+        self.map.remove(account);
     }
 
     pub fn get_balance(&self, account: &PublicKey) -> u64 {
@@ -247,5 +254,43 @@ mod tests {
         let sk2_balance = ledger.get_balance(&sk2.get_public_key());
         assert_eq!(reward - (transfered_amount + TRANSACTION_FEE), sk1_balance);
         assert_eq!(transfered_amount, sk2_balance);
+    }
+
+    #[test]
+    fn test_transfer_should_rollback(){
+        let sk1 = SecretKey::generate();
+        let sk2 = SecretKey::generate();
+
+        let root_accounts = Vec::from([sk1.get_public_key(), sk2.get_public_key()]);
+        let mut ledger = Ledger::new(root_accounts);
+
+        ledger.add_acount_if_absent(&sk1.get_public_key());
+        let reward = 100000;
+        ledger.reward_winner(&sk1.get_public_key(), reward);
+
+        let sk1_balance = ledger.get_balance(&sk1.get_public_key());
+        assert_eq!(sk1_balance, reward);
+
+        let transfered_amount = 10000;
+        let ix = Instruction::new(Vec::from([sk1.get_public_key(), sk2.get_public_key()]), transfered_amount); 
+
+        let transfered_amount2 = 100001;
+        let ix2 = Instruction::new(Vec::from([sk1.get_public_key(), sk2.get_public_key()]), transfered_amount2);
+        let ixs = Vec::from([ix, ix2]);
+
+        let test_block_hash = hash(&"recent_block".into_bytes());
+        let signers = Vec::from([sk1.clone()]);
+        let tx = Transaction::new(signers, &ixs, test_block_hash).unwrap();
+
+        let result = ledger.process_transaction(&tx, 1);
+
+        assert!(result.is_err());
+
+        let sk1_balance = ledger.get_balance(&sk1.get_public_key());
+        let sk2_balance = ledger.get_balance(&sk2.get_public_key());
+
+        // The transaction fee is still deducted even though the transaction failed
+        assert_eq!(reward - TRANSACTION_FEE, sk1_balance);
+        assert_eq!(0, sk2_balance);
     }
 }

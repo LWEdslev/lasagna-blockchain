@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{keys::PublicKey, util::MiniLas};
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Snapshot {
     pub balances: HashMap<PublicKey, Option<u64>>,
 }
