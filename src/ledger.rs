@@ -53,14 +53,17 @@ impl Ledger {
 
     pub fn process_transaction(&mut self, transaction: &Transaction, depth: i64) -> Result<()> {
         self.is_transaction_valid(transaction)?;
+        println!("validated tx");
 
         let payer = transaction.message.public_keys.get(0).unwrap();
         self.add_acount_if_absent(payer);
         let payer_balance = self.map.get_mut(payer).unwrap();
 
-        ensure!(*payer_balance < TRANSACTION_FEE, "Payer does not have enough LAS in account to pay transaction fee");
+        println!("payed transaction fee {}, {}", payer_balance, TRANSACTION_FEE);
+        ensure!(*payer_balance > TRANSACTION_FEE, "Payer does not have enough LAS in account to pay transaction fee");
 
         *payer_balance -= TRANSACTION_FEE;
+
 
         if !self.previous_transactions.insert(transaction.hash) {
             return Err(anyhow!("Transaction was executed previously"));
@@ -98,8 +101,10 @@ impl Ledger {
 
         let from_balance = self.map.get_mut(from).unwrap();
 
+        println!("sender balance: {}", from_balance);
+
         if *from_balance < instruction.amount {
-            return Err(anyhow!("Cannot send more than in account, including transaction fee"));
+            return Err(anyhow!("The sender does not have enoug MiniLas to perform the instruction"));
         }
 
         *from_balance -= instruction.amount;
@@ -202,5 +207,45 @@ impl Ledger {
 
     pub fn get_total_money_in_ledger(&self) -> MiniLas {
         self.map.values().sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{instruction::Instruction, keys::SecretKey, util::{hash, SerToBytes}};
+
+    use super::*;
+
+    #[test]
+    fn test_transfer_should_succeed(){
+        let sk1 = SecretKey::generate();
+        let sk2 = SecretKey::generate();
+
+        let root_accounts = Vec::from([sk1.get_public_key(), sk2.get_public_key()]);
+        let mut ledger = Ledger::new(root_accounts);
+
+        ledger.add_acount_if_absent(&sk1.get_public_key());
+        let reward = 1000000;
+        ledger.reward_winner(&sk1.get_public_key(), reward);
+
+        let sk1_balance = ledger.get_balance(&sk1.get_public_key());
+        assert_eq!(sk1_balance, reward);
+
+        let transfered_amount = 100001;
+        let ix = Instruction::new(Vec::from([sk1.get_public_key(), sk2.get_public_key()]), transfered_amount);
+        let ixs = Vec::from([ix]);
+
+        let test_block_hash = hash(&"recent_block".into_bytes());
+        let signers = Vec::from([sk1.clone()]);
+        let tx = Transaction::new(signers, &ixs, test_block_hash).unwrap();
+
+        let result = ledger.process_transaction(&tx, 1);
+
+        assert!(result.is_ok());
+
+        let sk1_balance = ledger.get_balance(&sk1.get_public_key());
+        let sk2_balance = ledger.get_balance(&sk2.get_public_key());
+        assert_eq!(reward - (transfered_amount + TRANSACTION_FEE), sk1_balance);
+        assert_eq!(transfered_amount, sk2_balance);
     }
 }

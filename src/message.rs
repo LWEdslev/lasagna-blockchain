@@ -12,11 +12,9 @@ pub struct TransactionMessageHeader{
 }
 
 impl TransactionMessageHeader{
-    pub fn new(instructions: &Vec<CompiledInstruction>, num_required_public_keys: u8) -> Self {
-        let num_instructions = instructions.len();
-
+    pub fn new(num_required_signatures: u8, num_required_public_keys: u8) -> Self {
         Self{
-            num_required_signatures: (num_instructions + 1) as u8,
+            num_required_signatures: num_required_signatures,
             num_required_public_keys: num_required_public_keys,
         }
     }
@@ -32,11 +30,10 @@ pub struct TransactionMessage{
 
 impl TransactionMessage{
     pub fn new(
-        payer: PublicKey,
-        instrs: Vec<Instruction>,
+        signers: &Vec<SecretKey>,
+        instrs: &Vec<Instruction>,
         recent_blockhash: [u8; 32],
     ) -> Self {
-        // 1) Canonical account list + index (payer first)
         let mut public_keys: Vec<PublicKey> = Vec::new();
         let mut key_index: HashMap<PublicKey, usize> = HashMap::new();
         let mut num_required_public_keys: u8 = 0;
@@ -52,13 +49,13 @@ impl TransactionMessage{
             }
         };
 
-        // Ensure payer at index 0
-        intern(&payer);
+        // make sure the signers are the in the same order in the public keys list as the signature list on the transaction
+        signers.iter().for_each(|sk| {
+            intern(&sk.get_public_key());
+        });
 
-        // 3) Compile instructions
         let mut compiled_instructions: Vec<CompiledInstruction> = Vec::with_capacity(instrs.len());
-        for ix in &instrs {
-            // accounts
+        for ix in instrs {
             let mut acct_indices = Vec::with_capacity(ix.public_keys.len());
             for pk in &ix.public_keys {
                 let idx = intern(&pk);
@@ -68,7 +65,7 @@ impl TransactionMessage{
             compiled_instructions.push(CompiledInstruction::new(acct_indices, ix));
         }
 
-        let header = TransactionMessageHeader::new(&compiled_instructions, num_required_public_keys);
+        let header = TransactionMessageHeader::new(signers.len() as u8, num_required_public_keys);
 
         Self {
             header,
@@ -103,6 +100,7 @@ impl TransactionMessage{
         let actual_key_amount = self.public_keys.len();
 
         ensure!(num_required_keys as usize == actual_key_amount, "The message contained {} public keys, but expected {}", actual_key_amount, num_required_keys);
-        todo!()
+
+        Ok(())
     }
 }
