@@ -98,7 +98,7 @@ impl TransactionMessage{
         Ok(())
     }
 
-    fn validate_public_keys(&self) -> Result<()> {
+    pub fn validate_public_keys(&self) -> Result<()> {
         todo!()
     }
 }

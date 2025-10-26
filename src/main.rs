@@ -1,4 +1,4 @@
-use lasagna_blockchain::{actors::{clock_actor::{ClockActor, Subscribe}, print_actor::{self, PrintActor}}, util::{get_unix_timestamp, START_TIME}};
+use lasagna_blockchain::{actors::{clock_actor::{ClockActor, Subscribe}, print_actor::{self}}, util::START_TIME};
 use actix::Actor;
 
 #[actix::main]

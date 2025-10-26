@@ -92,10 +92,8 @@ mod tests {
 
         // note the signing key is firs in the list
         let pks = Vec::from([sk2.get_public_key(), sk1.get_public_key()]);
-        let program_id = hash(&"PROGRAM_ID=TOKEN_TRANSFER".into_bytes());
         let minilas: u64 = 100000;
-        let data = minilas.into_bytes();
-        let ix = Instruction::new(pks, program_id, data);
+        let ix = Instruction::new(pks, minilas);
         let ixs = Vec::from([ix]);
         let test_block_hash = hash(&"recent_block".into_bytes());
         
@@ -115,10 +113,8 @@ mod tests {
 
         // The signing key is not first in the list, so the test signature cannot be verified
         let pks = Vec::from([sk1.get_public_key(), sk2.get_public_key()]);
-        let program_id = hash(&"PROGRAM_ID=TOKEN_TRANSFER".into_bytes());
         let minilas: u64 = 100000;
-        let data = minilas.into_bytes();
-        let ix = Instruction::new(pks, program_id, data);
+        let ix = Instruction::new(pks, minilas);
         let ixs = Vec::from([ix]);
         let test_block_hash = hash(&"recent_block".into_bytes());
         

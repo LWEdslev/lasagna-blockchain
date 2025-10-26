@@ -8,3 +8,4 @@ pub mod util;
 pub mod actors;
 pub mod message;
 pub mod instruction;
+pub mod journal;
