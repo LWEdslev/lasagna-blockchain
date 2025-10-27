@@ -112,7 +112,7 @@ impl Blockchain {
     }
 
     pub fn add_transaction(&mut self, transaction: Transaction) -> Result<()> {
-        transaction.verify_signature()?;
+        transaction.verify_signatures()?;
         self.ledger.is_transaction_valid(&transaction)?;
         self.transaction_buffer.insert(transaction);
         Ok(())
@@ -259,7 +259,7 @@ impl Blockchain {
                 self.transaction_buffer.remove(t);
             }
 
-            self.proccess_transactions(&block.transactions, block.depth)?;
+            self.process_transactions(&block.transactions, block.depth)?;
             self.ledger
                 .reward_winner(&block.draw.signed_by, self.calculate_reward(&block));
             self.best_path.push(block_ptr.clone());
@@ -432,7 +432,7 @@ impl Blockchain {
         }
 
         for transaction in self.transaction_buffer.iter() {
-            transaction.verify_signature()?;
+            transaction.verify_signatures()?;
             if self
                 .ledger
                 .previous_transactions
@@ -453,7 +453,7 @@ impl Blockchain {
         block.transactions.len() as MiniLas * TRANSACTION_FEE + BLOCK_REWARD
     }
 
-    fn proccess_transactions(&mut self, transactions: &Vec<Transaction>, depth: i64) -> Result<()> {
+    fn process_transactions(&mut self, transactions: &Vec<Transaction>, depth: i64) -> Result<()> {
         for t in transactions.iter() {
             self.ledger.process_transaction(t, depth)?;
         }
@@ -490,6 +490,8 @@ impl Blockchain {
 
 #[cfg(test)]
 mod tests {
+    use crate::instruction::Instruction;
+
     use super::*;
 
     #[test]
@@ -501,6 +503,13 @@ mod tests {
         assert_eq!(blockchain.best_path.len(), 1);
         assert_eq!(blockchain.ledger.get_balance(&sk.get_public_key()), ROOT_AMOUNT);
 
+        let sk1 = SecretKey::generate();
+        let ix = Instruction::new(sk.get_public_key(), sk1.get_public_key() , 20000);
+        let ixs = Vec::from([ix]);
+        let signers = Vec::from([sk.clone()]);
+        let tx = Transaction::new(signers.clone(), &ixs, 1).unwrap();
+        blockchain.add_transaction(tx.clone()).unwrap();
+        
         let mut max_iter = 1000;    
         let mut new_block = None;
         while new_block == None && max_iter > 0 {
