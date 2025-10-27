@@ -507,11 +507,11 @@ mod tests {
         let ixs = Vec::from([ix]);
         let signers = Vec::from([sk.clone()]);
         let tx = Transaction::new(signers.clone(), &ixs, 1).unwrap();
+        blockchain.add_transaction(tx.clone()).unwrap();
         
         let mut max_iter = 1000;    
         let mut new_block = None;
         while new_block == None && max_iter > 0 {
-            blockchain.add_transaction(tx.clone()).unwrap();
             new_block = blockchain.make_block(&sk);
             max_iter -= 1;
         }

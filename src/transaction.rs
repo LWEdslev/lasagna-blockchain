@@ -27,7 +27,6 @@ impl Transaction {
         let signatures: Vec<Signature> = signers.iter().map(|sk| Signature::sign(sk, &message_bytes)).collect();
         
         let hash = hash(&(message_bytes, signatures.clone(), nonce).into_bytes());
-        println!("hash {:?}", hash);
 
         Ok(Self{ hash, message, signatures, nonce })
     }
