@@ -26,9 +26,17 @@ impl Transaction {
         let message_bytes = (&message, nonce).into_bytes();
         let signatures: Vec<Signature> = signers.iter().map(|sk| Signature::sign(sk, &message_bytes)).collect();
         
-        let hash = hash(&(message_bytes, signatures.clone()).into_bytes());
+        let hash = hash(&(message_bytes, signatures.clone(), nonce).into_bytes());
+        println!("hash {:?}", hash);
 
         Ok(Self{ hash, message, signatures, nonce })
+    }
+
+    pub fn validate(&self) -> Result<()>{
+        ensure!(self.signatures.len() == self.message.header.num_required_signatures as usize,"Transaction does not have the required amount of signatures");
+        self.message.validate()?;
+
+        Ok(())
     }
 
     pub fn verify_signatures(&self) -> Result<()> {
@@ -38,8 +46,6 @@ impl Transaction {
         let num_signatures = self.signatures.len();
         ensure!(required_signature_amount as usize == num_signatures, "Transaction requires {} signatures, but only has {}", required_signature_amount, num_signatures);
 
-        println!("made it through");
-
         // Verify payer signature
         let payer = self.message.accounts.get(0).unwrap();
         let payer_signature = self.signatures.get(0).unwrap();
@@ -47,9 +53,7 @@ impl Transaction {
 
         // Verify instruction signatures
         for (index, instruction) in self.message.instructions.iter().enumerate() {
-            println!("{}", index);
             let pk_index = instruction.account_indices.get(0).ok_or_else(|| anyhow!("No signer was provided for instruction"))?;
-            println!("pk_index {}", pk_index);
             let pk = self.message.accounts.get(*pk_index).ok_or_else(|| anyhow!("No public key was provided for the signer of the instruction"))?;
             let signature = self.signatures.get(*pk_index).ok_or_else(|| anyhow!("No Signature was provided for the signer of the instruction"))?;
             signature.verify(pk, &message_bytes)?;
@@ -124,8 +128,6 @@ mod tests {
         let signers = Vec::from([sk2.clone()]);
         let tx = Transaction::new(signers, &ixs, 1).unwrap();
 
-        println!("tx {:?}", tx.signatures.len());
-        
         assert!(tx.verify_signatures().is_err());
 
         // Insert the correct signer (the sender) and the transaction should no longer fail
@@ -171,7 +173,5 @@ mod tests {
         let tx = Transaction::new(signers, &ixs, 1).unwrap();
 
         assert!(tx.verify_signatures().is_err());
-
-
     }
 }

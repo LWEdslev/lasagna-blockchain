@@ -30,22 +30,10 @@ impl Ledger {
     }
      
     pub fn is_transaction_valid(&self, transaction: &Transaction) -> Result<()> {
-        transaction.verify_signatures()?;
-        transaction.message.validate_public_keys()?;
+        transaction.validate()?;
 
         if self.previous_transactions.contains(&transaction.hash) {
             return Err(anyhow!("Transaction was executed previously"));
-        }
-
-        for ix in &transaction.message.instructions{
-            let num_pks = ix.account_indices.len();
-            if num_pks != 2 {
-                return Err(anyhow!("Instructions need to have exactly 2 pks, one for sending and one for receiving"))
-            }
-    
-            if ix.amount < TRANSACTION_FEE {
-                return Err(anyhow!("Transfer can not be smaller than the transaction fee"))
-            }
         }
 
         Ok(())
@@ -53,6 +41,12 @@ impl Ledger {
 
     pub fn process_transaction(&mut self, transaction: &Transaction, depth: i64) -> Result<()> {
         self.is_transaction_valid(transaction)?;
+
+        // Snapshot the accounts in the transaction before executing the transaction
+        let mut snapshot = Snapshot::new();
+        for pk in &transaction.message.accounts {
+            snapshot.snapshot_balance(&pk, &self.map);
+        }
 
         let payer = transaction.message.accounts.get(0).unwrap();
         self.add_acount_if_absent(payer);
@@ -65,12 +59,6 @@ impl Ledger {
 
         if !self.previous_transactions.insert(transaction.hash) {
             return Err(anyhow!("Transaction was executed previously"));
-        }
-
-        let mut snapshot = Snapshot::new();
-
-        for pk in &transaction.message.accounts {
-            snapshot.snapshot_balance(&pk, &self.map);
         }
 
         for ix in &transaction.message.instructions {
@@ -99,8 +87,6 @@ impl Ledger {
 
         let from_balance = self.map.get_mut(from).unwrap();
 
-        println!("sender balance: {}", from_balance);
-
         if *from_balance < instruction.amount {
             return Err(anyhow!("The sender does not have enoug MiniLas to perform the instruction"));
         }
@@ -123,7 +109,6 @@ impl Ledger {
     fn rollback_to_snapshot(&mut self, snapshot: &Snapshot, transaction: &Transaction){
         println!("rolling back");
         for (pk, amount) in &snapshot.balances {
-            println!("{:?}", amount);
             match amount {
                 Some(a) => {
                     let balance = self.map.get_mut(pk).unwrap();

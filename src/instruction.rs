@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Result};
+use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::{blockchain::TRANSACTION_FEE, instruction, keys::PublicKey, util::Sha256Hash};
+use crate::{blockchain::TRANSACTION_FEE, keys::PublicKey};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct Instruction{
@@ -35,14 +35,8 @@ impl CompiledInstruction{
 
     pub fn validate(&self) -> Result<()>{
         let num_pks = self.account_indices.len();
-
-        if num_pks != 2 {
-            return Err(anyhow!("Instructions need to have exactly 2 pks, one for sending and one for receiving"))
-        }
-
-        if self.amount < TRANSACTION_FEE {
-            return Err(anyhow!("Transfer can not be smaller than the transaction fee"))
-        }
+        ensure!(num_pks == 2, "Instructions need to have exactly 2 pks, one for sending and one for receiving");
+        ensure!(self.amount > TRANSACTION_FEE, "Transfer can not be smaller than the transaction fee");
 
         Ok(())
 

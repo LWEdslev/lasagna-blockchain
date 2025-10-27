@@ -1,21 +1,21 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{ensure, Result};
 
-use crate::{instruction::{CompiledInstruction, Instruction}, keys::{PublicKey, SecretKey}, util::Sha256Hash};
+use crate::{instruction::{CompiledInstruction, Instruction}, keys::{PublicKey, SecretKey}};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct TransactionMessageHeader{
     pub num_required_signatures: u8,
-    pub num_required_public_keys: u8,
+    pub num_required_accounts: u8,
 }
 
 impl TransactionMessageHeader{
-    pub fn new(num_required_signatures: u8, num_required_public_keys: u8) -> Self {
+    pub fn new(num_required_signatures: u8, num_required_accounts: u8) -> Self {
         Self{
             num_required_signatures: num_required_signatures,
-            num_required_public_keys: num_required_public_keys,
+            num_required_accounts,
         }
     }
 }
@@ -32,9 +32,9 @@ pub struct TransactionMessage{
 impl TransactionMessage{
     pub fn new(
         signers: &Vec<SecretKey>,
-        instrs: &Vec<Instruction>,
+        instructions: &Vec<Instruction>,
     ) -> Self {
-        let mut public_keys: Vec<PublicKey> = Vec::new();
+        let mut accounts: Vec<PublicKey> = Vec::new();
         let mut key_index: HashMap<PublicKey, usize> = HashMap::new();
         let mut num_required_public_keys: u8 = 0;
         let mut intern = |pk: &PublicKey| -> usize {
@@ -42,8 +42,8 @@ impl TransactionMessage{
                 i
             } else {
                 num_required_public_keys += 1;
-                let i = public_keys.len() as usize;
-                public_keys.push(pk.clone());
+                let i = accounts.len() as usize;
+                accounts.push(pk.clone());
                 key_index.insert(pk.clone(), i);
                 i
             }
@@ -54,8 +54,8 @@ impl TransactionMessage{
             intern(&sk.get_public_key());
         });
 
-        let mut compiled_instructions: Vec<CompiledInstruction> = Vec::with_capacity(instrs.len());
-        for ix in instrs {
+        let mut compiled_instructions: Vec<CompiledInstruction> = Vec::with_capacity(instructions.len());
+        for ix in instructions {
             let mut acct_indices = Vec::with_capacity(ix.accounts.len());
             for pk in &ix.accounts {
                 let idx = intern(&pk);
@@ -69,26 +69,24 @@ impl TransactionMessage{
 
         Self {
             header,
-            accounts: public_keys,
+            accounts,
             instructions: compiled_instructions,
         }
     }
 
     pub fn validate(&self) -> Result<()> {
-        let num_instructions = self.instructions.len();
-        if num_instructions + 1 != self.header.num_required_signatures as usize {
-            return Err(anyhow!("The required amount of signatures was {}, expected {}", self.header.num_required_signatures, num_instructions));
-        }
+        self.validate_accounts()?;
 
-        self.validate_public_keys()?;
+        for ix in &self.instructions {
+            ix.validate()?;
+        }
 
         Ok(())
     }
 
-    pub fn validate_public_keys(&self) -> Result<()> {
-        let num_required_keys = self.header.num_required_public_keys;
+    pub fn validate_accounts(&self) -> Result<()> {
+        let num_required_keys = self.header.num_required_accounts;
         let actual_key_amount = self.accounts.len();
-
         ensure!(num_required_keys as usize == actual_key_amount, "The message contained {} public keys, but expected {}", actual_key_amount, num_required_keys);
 
         Ok(())
