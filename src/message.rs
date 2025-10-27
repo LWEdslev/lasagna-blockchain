@@ -49,7 +49,7 @@ impl TransactionMessage{
             }
         };
 
-        // make sure the signers are the in the same order in the accounts list as the signature list on the transaction
+        // Make sure the signers are the in the same order in the accounts list as the signature list on the transaction
         signers.iter().for_each(|sk| {
             intern(&sk.get_public_key());
         });

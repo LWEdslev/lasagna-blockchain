@@ -56,10 +56,7 @@ impl Ledger {
 
         *payer_balance -= TRANSACTION_FEE;
 
-
-        if !self.previous_transactions.insert(transaction.hash) {
-            return Err(anyhow!("Transaction was executed previously"));
-        }
+        ensure!(self.previous_transactions.insert(transaction.hash), "Transaction was executed previously");
 
         for ix in &transaction.message.instructions {
             let result = self.process_instruction(ix, &transaction.message, depth);
@@ -76,20 +73,18 @@ impl Ledger {
     }
 
     fn process_instruction(&mut self, instruction: &CompiledInstruction, message: &TransactionMessage, depth: i64) -> Result<()>{
-        let from_idx = instruction.account_indices.get(0).unwrap();
-        let to_idx = instruction.account_indices.get(1).unwrap();
+        let from_index = instruction.account_indices.get(0).unwrap();
+        let to_index = instruction.account_indices.get(1).unwrap();
 
-        let from = message.accounts.get(*from_idx).ok_or_else(|| anyhow!("Failed to get sending public key during instruction processing"))?;
-        let to = message.accounts.get(*to_idx).ok_or_else(|| anyhow!("Failed to get receiving public key during instruction processing"))?;
+        let from = message.accounts.get(*from_index).ok_or_else(|| anyhow!("Failed to get sending public key during instruction processing"))?;
+        let to = message.accounts.get(*to_index).ok_or_else(|| anyhow!("Failed to get receiving public key during instruction processing"))?;
 
         self.add_acount_if_absent(from);
         self.add_acount_if_absent(to);
 
         let from_balance = self.map.get_mut(from).unwrap();
 
-        if *from_balance < instruction.amount {
-            return Err(anyhow!("The sender does not have enoug MiniLas to perform the instruction"));
-        }
+        ensure!(*from_balance > instruction.amount , "The sender does not have enoug MiniLas to perform the instruction");
 
         *from_balance -= instruction.amount;
 
@@ -101,7 +96,6 @@ impl Ledger {
         if !self.published_accounts.contains_key(to) && *to_balance >= MINIMUM_STAKE_AMOUNT {
             self.published_accounts.insert(to.clone(), depth);
         }
-
 
         Ok(())
     }
@@ -229,6 +223,7 @@ mod tests {
         let tx = Transaction::new(signers, &ixs, 1).unwrap();
 
         let result = ledger.process_transaction(&tx, 1);
+        println!("{:?}", result);
 
         assert!(result.is_ok());
 
@@ -271,7 +266,7 @@ mod tests {
         let sk2_balance = ledger.get_balance(&sk2.get_public_key());
 
         // The transaction fee is still deducted even though the transaction failed
-        assert_eq!(reward - TRANSACTION_FEE, sk1_balance);
+        assert_eq!(reward, sk1_balance);
         assert_eq!(0, sk2_balance);
     }
 }

@@ -76,7 +76,7 @@ mod tests {
         let signers = Vec::from([sk1]);
         let tx = Transaction::new(signers, &ixs, 1).unwrap();
         
-        assert!(!tx.verify_signatures().is_err());
+        assert!(tx.verify_signatures().is_ok());
     }
 
     #[test]
@@ -108,7 +108,7 @@ mod tests {
         let signers = Vec::from([sk1, sk2]);
         let tx = Transaction::new(signers, &ixs, 1).unwrap();
         
-        assert!(!tx.verify_signatures().is_err())
+        assert!(tx.verify_signatures().is_ok())
     }
 
     #[test]
@@ -130,7 +130,7 @@ mod tests {
         let signers = Vec::from([sk1]);
         let tx = Transaction::new(signers, &ixs, 1).unwrap();
 
-        assert!(!tx.verify_signatures().is_err());
+        assert!(tx.verify_signatures().is_ok());
     }
 
     #[test]
