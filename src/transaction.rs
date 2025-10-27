@@ -51,7 +51,7 @@ impl Transaction {
         payer_signature.verify(payer, &message_bytes)?;
 
         // Verify instruction signatures
-        for (index, instruction) in self.message.instructions.iter().enumerate() {
+        for instruction in self.message.instructions.iter() {
             let pk_index = instruction.account_indices.get(0).ok_or_else(|| anyhow!("No signer was provided for instruction"))?;
             let pk = self.message.accounts.get(*pk_index).ok_or_else(|| anyhow!("No public key was provided for the signer of the instruction"))?;
             let signature = self.signatures.get(*pk_index).ok_or_else(|| anyhow!("No Signature was provided for the signer of the instruction"))?;
@@ -100,10 +100,8 @@ mod tests {
         let sk1 = SecretKey::generate();
         let sk2 = SecretKey::generate();
 
-        // note the signing key is firs in the list
-        let pks = Vec::from([sk2.get_public_key(), sk1.get_public_key()]);
         let minilas: u64 = 100000;
-        let ix = Instruction::new(pks, minilas);
+        let ix = Instruction::new(sk1.get_public_key(), sk1.get_public_key(), minilas);
         let ixs = Vec::from([ix]);
         
         // note the payer is first in the list of signers
@@ -119,9 +117,8 @@ mod tests {
         let sk2 = SecretKey::generate();
 
         // The signing key is not first in the list, so the test signature cannot be verified
-        let pks = Vec::from([sk1.get_public_key(), sk2.get_public_key()]);
         let minilas: u64 = 100000;
-        let ix = Instruction::new(pks, minilas);
+        let ix = Instruction::new(sk1.get_public_key(), sk2.get_public_key(), minilas);
         let ixs = Vec::from([ix]);
         
         let signers = Vec::from([sk2.clone()]);
@@ -148,16 +145,16 @@ mod tests {
         let minilas: u64 = 100000;
 
         // Create instructions, index 0 is the sender and index 1 is the receiver
-        let ix = Instruction::new(Vec::from([sk1.get_public_key(), sk2.get_public_key()]), minilas);
-        let ix2 = Instruction::new(Vec::from([sk3.get_public_key(), sk4.get_public_key()]), minilas);
-        let ix3 = Instruction::new(Vec::from([sk1.get_public_key(), sk4.get_public_key()]), minilas);
-        let ix4 = Instruction::new(Vec::from([sk2.get_public_key(), sk3.get_public_key()]), minilas);
-        let ix5 = Instruction::new(Vec::from([sk3.get_public_key(), sk1.get_public_key()]), minilas);
-        let ix6 = Instruction::new(Vec::from([sk4.get_public_key(), sk2.get_public_key()]), minilas);
-        let ix7 = Instruction::new(Vec::from([sk2.get_public_key(), sk1.get_public_key()]), minilas);
-        let ix8 = Instruction::new(Vec::from([sk3.get_public_key(), sk4.get_public_key()]), minilas);
-        let ix9 = Instruction::new(Vec::from([sk2.get_public_key(), sk4.get_public_key()]), minilas);
-        let ix10 = Instruction::new(Vec::from([sk1.get_public_key(), sk5.get_public_key()]), minilas);
+        let ix = Instruction::new(sk1.get_public_key(),sk2.get_public_key(), minilas);
+        let ix2 = Instruction::new(sk3.get_public_key(), sk4.get_public_key(), minilas);
+        let ix3 = Instruction::new(sk1.get_public_key(), sk4.get_public_key(), minilas);
+        let ix4 = Instruction::new(sk2.get_public_key(), sk3.get_public_key(), minilas);
+        let ix5 = Instruction::new(sk3.get_public_key(), sk1.get_public_key(), minilas);
+        let ix6 = Instruction::new(sk4.get_public_key(), sk2.get_public_key(), minilas);
+        let ix7 = Instruction::new(sk2.get_public_key(), sk1.get_public_key(), minilas);
+        let ix8 = Instruction::new(sk3.get_public_key(), sk4.get_public_key(), minilas);
+        let ix9 = Instruction::new(sk2.get_public_key(), sk4.get_public_key(), minilas);
+        let ix10 = Instruction::new(sk1.get_public_key(), sk5.get_public_key(), minilas);
         let ixs = Vec::from([ix, ix2, ix3, ix4, ix5, ix6, ix7, ix8, ix9, ix10]);
 
         // create transaction, the signer on index 0 is the payer

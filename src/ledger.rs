@@ -222,7 +222,7 @@ mod tests {
         assert_eq!(sk1_balance, reward);
 
         let transfered_amount = 100001;
-        let ix = Instruction::new(Vec::from([sk1.get_public_key(), sk2.get_public_key()]), transfered_amount);
+        let ix = Instruction::new(sk1.get_public_key(), sk2.get_public_key(), transfered_amount);
         let ixs = Vec::from([ix]);
 
         let signers = Vec::from([sk1.clone()]);
@@ -254,10 +254,10 @@ mod tests {
         assert_eq!(sk1_balance, reward);
 
         let transfered_amount = 10000;
-        let ix = Instruction::new(Vec::from([sk1.get_public_key(), sk2.get_public_key()]), transfered_amount); 
+        let ix = Instruction::new(sk1.get_public_key(), sk2.get_public_key(), transfered_amount); 
 
         let transfered_amount2 = 100001;
-        let ix2 = Instruction::new(Vec::from([sk1.get_public_key(), sk2.get_public_key()]), transfered_amount2);
+        let ix2 = Instruction::new(sk1.get_public_key(), sk2.get_public_key(), transfered_amount2);
         let ixs = Vec::from([ix, ix2]);
 
         let signers = Vec::from([sk1.clone()]);

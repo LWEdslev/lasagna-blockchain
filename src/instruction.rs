@@ -23,8 +23,9 @@ pub struct CompiledInstruction{
 }
 
 impl Instruction {
-    pub fn new(public_keys: Vec<PublicKey>, amount: u64) -> Self {
-        Self { accounts: public_keys, amount }
+    pub fn new(from: PublicKey, to: PublicKey, amount: u64) -> Self {
+        let accounts = Vec::from([from, to]);
+        Self { accounts, amount }
     }
 }
 

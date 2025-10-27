@@ -503,7 +503,7 @@ mod tests {
         assert_eq!(blockchain.ledger.get_balance(&sk.get_public_key()), ROOT_AMOUNT);
 
         let sk1 = SecretKey::generate();
-        let ix = Instruction::new(Vec::from([sk.get_public_key(), sk1.get_public_key()]), 20000);
+        let ix = Instruction::new(sk.get_public_key(), sk1.get_public_key(), 20000);
         let ixs = Vec::from([ix]);
         let signers = Vec::from([sk.clone()]);
         let tx = Transaction::new(signers.clone(), &ixs, 1).unwrap();
