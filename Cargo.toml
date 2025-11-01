@@ -17,6 +17,7 @@ futures-lite = "2.6.1"
 iroh = "0.93.2"
 iroh-gossip = "0.93.1"
 num-bigint = { version = "0.4.6", features = ["serde"] }
+pretty_assertions = "1.4.1"
 rand = "0.9.2"
 serde = { version = "1.0.228", features = ["derive"] }
 sha2 = "0.10.9"

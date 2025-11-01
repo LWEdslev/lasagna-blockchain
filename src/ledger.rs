@@ -3,14 +3,14 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    blockchain::TRANSACTION_FEE, draw::SEED_AGE, keys::PublicKey, transaction::Transaction, util::{MiniLas, Sha256Hash}
+    blockchain::TRANSACTION_FEE, keys::PublicKey, transaction::Transaction, util::{MiniLas, Sha256Hash}
 };
 use anyhow::{anyhow, Result};
 
 // You must have this much and h SEED_AGE blocks to be considered stakable
 pub const MINIMUM_STAKE_AMOUNT: MiniLas = 10_000000;
 
-#[derive(Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Eq, PartialEq, Debug)]
 pub struct Ledger {
     pub map: HashMap<PublicKey, MiniLas>,
     pub previous_transactions: HashSet<Sha256Hash>,
@@ -134,16 +134,16 @@ impl Ledger {
         *self.map.get(account).unwrap_or(&0)
     }
 
-    pub fn can_stake(&self, account: &PublicKey, at_depth: i64) -> bool {
+    pub fn can_stake(&self, account: &PublicKey) -> bool {
         if self.root_accounts.contains(account) {
             return true; // root accounts can stake immediately
         }
 
-        let Some(publ_depth) = self.published_accounts.get(account) else {
+        let Some(&money) = self.map.get(account) else {
             return false;
         };
 
-        at_depth - publ_depth > 2 * SEED_AGE
+        money > MINIMUM_STAKE_AMOUNT
     }
 
     pub fn get_total_money_in_ledger(&self) -> MiniLas {

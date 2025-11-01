@@ -11,17 +11,18 @@ use crate::{
     transaction::Transaction,
     util::{BlockPtr, MiniLas, START_TIME, Sha256Hash, calculate_timeslot},
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, ensure};
 
 pub const BLOCK_REWARD: MiniLas = 3_000000;
 pub const ROOT_AMOUNT: MiniLas = 100_000000;
 pub const TRANSACTION_FEE: MiniLas = 0_010000;
 
-#[derive(Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Eq, PartialEq, Debug)]
 pub struct Blockchain {
     pub blocks: Vec<HashMap<Sha256Hash, Block>>,
     pub best_path: Vec<BlockPtr>,
-    pub ledger: Ledger,
+    pub dynamic_ledger: Ledger,
+    pub static_ledger: Ledger,
     pub root_accounts: Vec<PublicKey>,
     pub orphans: HashMap<Sha256Hash, Vec<Block>>,
     pub transaction_buffer: HashSet<Transaction>,
@@ -55,10 +56,14 @@ impl Blockchain {
         let blocks = vec![map];
         let best_path = vec![BlockPtr { hash, depth: 0 }];
 
+        let static_ledger = ledger.clone();
+        let dynamic_ledger = ledger;
+
         Self {
             blocks,
             best_path,
-            ledger,
+            static_ledger,
+            dynamic_ledger,
             root_accounts,
             orphans: Default::default(),
             transaction_buffer: Default::default(),
@@ -107,94 +112,22 @@ impl Blockchain {
         Ok(())
     }
 
-    pub fn stake(&self, draw: Draw, wallet: &PublicKey, depth: i64) -> bool {
-        is_winner(&self.ledger, draw, wallet, depth)
+    pub fn stake(&self, draw: Draw, wallet: &PublicKey) -> bool {
+        is_winner(&self.static_ledger, draw, wallet)
     }
 
     pub fn add_transaction(&mut self, transaction: Transaction) -> Result<()> {
         transaction.verify_signature()?;
-        self.ledger.is_transaction_valid(&transaction)?;
+        self.dynamic_ledger.is_transaction_valid(&transaction)?;
         self.transaction_buffer.insert(transaction);
         Ok(())
-    }
-
-    fn verify_other_winner(&self, block: &Block) -> Result<()> {
-        // If this is a direct extension of the best path we have the correct ledger
-        if self.best_path_head()
-            == &self
-                .get_parent(&block)
-                .ok_or(anyhow!("No parent"))?
-                .ptr()
-        {
-            if is_winner(
-                &self.ledger,
-                block.draw.clone(),
-                &block.draw.signed_by,
-                block.depth,
-            ) {
-                return Ok(());
-            }
-            return Err(anyhow!("Direct extension, not winner"));
-        }
-
-        // Otherwise must rollback the entire ledger to the other block
-        let common = self
-            .find_common_ancestor(self.best_path_head().clone(), block.ptr())
-            .ok_or(anyhow!("no common ancestor"))?
-            .clone();
-        let mut track_ledger = self.ledger.clone();
-
-        let mut from = self.best_path_head().clone();
-        while from != common {
-            let from_block = self
-                .get_block(&from)
-                .ok_or(anyhow!("Invalid block deref"))?;
-            let amount = self.calculate_reward(from_block);
-            let winner = &from_block.draw.signed_by;
-            track_ledger.rollback_reward(winner, amount);
-            let depth = from_block.depth;
-            for t in from_block.transactions.iter() {
-                track_ledger.rollback_transaction(t, depth);
-            }
-
-            from = self.get_parent_from_ptr(&from).ok_or(anyhow!("no parent"))?.ptr();
-        }
-
-        // Reapply but first find the path
-        let mut path = Vec::new();
-        let mut to = block.ptr();
-        while to != common {
-            path.push(to.clone());
-            to = self.get_parent_from_ptr(&to).ok_or(anyhow!("no parent"))?.ptr();
-        }
-
-        // Now we apply
-        while let Some(block_ptr) = path.pop() {
-            let block_to_apply = self.get_block(&block_ptr).ok_or(anyhow!("No block"))?;
-            let amount = self.calculate_reward(block_to_apply);
-            for t in block_to_apply.transactions.iter() {
-                track_ledger.process_transaction(t, block_to_apply.depth)?;
-            }
-
-            track_ledger.reward_winner(&block_to_apply.draw.signed_by, amount);
-        }
-
-        Ok(())
-    }
-
-    pub fn can_block_be_direct_extension(&self, _block: &Block) -> Result<()> {
-        todo!()
-    }
-
-    pub fn can_block_be_branch_extension(&self, _block: &Block) -> Result<()> {
-        todo!()
     }
 
     pub fn can_block_be_added(&self, block: &Block) -> Result<()> {
         block.verify_signature()?;
 
         for t in block.transactions.iter() {
-            self.ledger.is_transaction_valid(t)?
+            self.dynamic_ledger.is_transaction_valid(t)?
         }
         self.check_seed(&block)?;
 
@@ -214,9 +147,53 @@ impl Blockchain {
             }
         }
 
-        self.verify_other_winner(block)?;
+        ensure!(is_winner(&self.get_static_ledger_of(block.depth)?, block.draw.clone(), &block.draw.signed_by));
 
         Ok(())
+    }
+
+    pub fn get_static_ledger_of(&self, dynamic_depth: i64) -> Result<Ledger> {
+        let current_static_ledger = &self.static_ledger;
+        let current_static_ptr = self.get_static_block_ptr(self.best_path.len() as _);
+
+        let target_static_ptr = self.get_static_block_ptr(dynamic_depth as _);
+
+        if current_static_ptr == target_static_ptr {
+            return Ok(current_static_ledger.clone());
+        }
+
+        let mut current_static_ledger = current_static_ledger.clone();
+        if current_static_ptr.depth > target_static_ptr.depth {
+            let from = current_static_ptr.depth as usize;
+            let to = target_static_ptr.depth as usize;
+            let path = &self.best_path[to..from];
+            for ptr in path.iter().rev() {
+                let block = self.get_block(ptr).ok_or(anyhow!("invalid deref"))?;
+                let reward = self.calculate_reward(block);
+
+                current_static_ledger.rollback_reward(&block.draw.signed_by, reward);
+                for t in &block.transactions {
+                    current_static_ledger.rollback_transaction(&t, block.depth);
+                }
+            }
+
+            return Ok(current_static_ledger);
+        }
+        else {
+            let from = current_static_ptr.depth as usize;
+            let to = target_static_ptr.depth as usize;
+            let path = &self.best_path[from..to];
+            for ptr in path.iter() {
+                let block = self.get_block(ptr).ok_or(anyhow!("invalid deref"))?;
+                let reward = self.calculate_reward(block);
+                current_static_ledger.reward_winner(&block.draw.signed_by, reward);
+                for t in &block.transactions {
+                    current_static_ledger.process_transaction(&t, block.depth)?;
+                }
+            }
+            
+            return Ok(current_static_ledger);
+        }
     }
 
     pub fn add_block(&mut self, block: Block) -> Result<()> {
@@ -260,7 +237,7 @@ impl Blockchain {
             }
 
             self.proccess_transactions(&block.transactions, block.depth)?;
-            self.ledger
+            self.dynamic_ledger
                 .reward_winner(&block.draw.signed_by, self.calculate_reward(&block));
             self.best_path.push(block_ptr.clone());
         } else if block > *self.get_block(&old_best_path).expect("unreachable") {
@@ -275,6 +252,15 @@ impl Blockchain {
             }
         }
 
+        self.update_static_ledger()?;
+
+        Ok(())
+    }
+
+    fn update_static_ledger(&mut self) -> Result<()> {
+        let new_depth = self.best_path.len() as i64;
+        let new_static_ledger = self.get_static_ledger_of(new_depth)?;
+        self.static_ledger = new_static_ledger;
         Ok(())
     }
 
@@ -306,6 +292,7 @@ impl Blockchain {
             self.add_block(block_to_add.clone())?;
         }
 
+
         Ok(())
     }
 
@@ -323,11 +310,21 @@ impl Blockchain {
             .ok_or(anyhow!("Cannot rollback a block that doesn't exist"))?
             .clone();
         for t in block.transactions.iter().rev() {
-            self.ledger.rollback_transaction(t, block.depth);
+            self.dynamic_ledger.rollback_transaction(t, block.depth);
         }
 
-        self.ledger
+        self.dynamic_ledger
             .rollback_reward(&block.draw.signed_by, self.calculate_reward(&block));
+
+        self.blocks[block.depth as usize].remove_entry(&block_ptr.hash).ok_or(anyhow!("No block to remove"))?;
+
+        if block.depth >= self.best_path.len() as i64 && self.blocks[block.depth as usize].len() == 0 {
+            self.blocks.remove(block.depth as usize);
+        }
+
+        self.update_static_ledger()?;
+
+
 
         Ok(())
     }
@@ -371,7 +368,8 @@ impl Blockchain {
                 genesis_block.draw.seed.clone()
             }
         };
-        if is_winner(&self.ledger, Draw::new(timeslot, seed.clone(), sk), &sk.get_public_key(), depth) {
+        let new_static_ledger = self.get_static_ledger_of(depth).expect("unable to create new static ledger");
+        if is_winner(&new_static_ledger, Draw::new(timeslot, seed.clone(), sk), &sk.get_public_key()) {
             let block = Block::new(timeslot, prev_hash, depth, transactions, sk, seed);
 
             Some(block)
@@ -434,7 +432,7 @@ impl Blockchain {
         for transaction in self.transaction_buffer.iter() {
             transaction.verify_signature()?;
             if self
-                .ledger
+                .dynamic_ledger
                 .previous_transactions
                 .contains(&transaction.hash)
             {
@@ -449,20 +447,26 @@ impl Blockchain {
         Ok(())
     }
 
+    pub fn get_static_block_ptr(&self, dynamic_depth: i64) -> &BlockPtr {
+        let dynamic_depth = dynamic_depth as usize;
+        let idx = dynamic_depth.saturating_sub(SEED_AGE as _);
+        &self.best_path[idx]
+    }
+
     pub fn calculate_reward(&self, block: &Block) -> MiniLas {
         block.transactions.len() as MiniLas * TRANSACTION_FEE + BLOCK_REWARD
     }
 
     fn proccess_transactions(&mut self, transactions: &Vec<Transaction>, depth: i64) -> Result<()> {
         for t in transactions.iter() {
-            self.ledger.process_transaction(t, depth)?;
+            self.dynamic_ledger.process_transaction(t, depth)?;
         }
         Ok(())
     }
 }
 
-fn is_winner(ledger: &Ledger, draw: Draw, wallet: &PublicKey, depth: i64) -> bool {
-    if !ledger.can_stake(wallet, depth) {
+fn is_winner(ledger: &Ledger, draw: Draw, wallet: &PublicKey) -> bool {
+    if !ledger.can_stake(wallet) {
         return false;
     }
 
@@ -491,6 +495,7 @@ impl Blockchain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn test_start() {
@@ -499,7 +504,7 @@ mod tests {
         let genesis_block = Blockchain::produce_genesis_block(root_accounts.clone(), &sk);
         let mut blockchain = Blockchain::start(root_accounts, genesis_block);
         assert_eq!(blockchain.best_path.len(), 1);
-        assert_eq!(blockchain.ledger.get_balance(&sk.get_public_key()), ROOT_AMOUNT);
+        assert_eq!(blockchain.dynamic_ledger.get_balance(&sk.get_public_key()), ROOT_AMOUNT);
 
         let mut max_iter = 1000;    
         let mut new_block = None;
@@ -516,6 +521,41 @@ mod tests {
         blockchain.add_block(new_block).unwrap();
     
         assert_eq!(blockchain.best_path.len(), 2);
-        assert!(blockchain.ledger.get_balance(&sk.get_public_key()) > ROOT_AMOUNT);
+        assert!(blockchain.dynamic_ledger.get_balance(&sk.get_public_key()) > ROOT_AMOUNT);
+    }
+
+    #[test]
+    fn test_simple_rollback() {
+        let sk = SecretKey::generate();
+        let root_accounts = vec![sk.get_public_key()];
+        let genesis_block = Blockchain::produce_genesis_block(root_accounts.clone(), &sk);
+        let mut blockchain = Blockchain::start(root_accounts, genesis_block);
+        assert_eq!(blockchain.best_path.len(), 1);
+        assert_eq!(blockchain.dynamic_ledger.get_balance(&sk.get_public_key()), ROOT_AMOUNT);
+
+        let initial_blockchain = blockchain.clone();
+
+        let mut max_iter = 1000;    
+        let mut new_block = None;
+        while new_block == None && max_iter > 0 {
+            new_block = blockchain.make_block(&sk);
+            max_iter -= 1;
+        }
+
+        if max_iter == 0 {
+            eprintln!("no new block found")
+        }
+
+        let new_block = new_block.unwrap();
+        blockchain.add_block(new_block).unwrap();
+    
+        assert_eq!(blockchain.best_path.len(), 2);
+        assert!(blockchain.dynamic_ledger.get_balance(&sk.get_public_key()) > ROOT_AMOUNT);
+
+        blockchain.rollback_block(&blockchain.best_path_head().clone()).unwrap();
+        
+        assert_eq!(blockchain.best_path.len(), 1);
+        assert_eq!(blockchain.dynamic_ledger.get_balance(&sk.get_public_key()), ROOT_AMOUNT);   
+        assert_eq!(blockchain, initial_blockchain);
     }
 }
