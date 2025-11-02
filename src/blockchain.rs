@@ -709,7 +709,7 @@ mod tests {
 
         assert!(!blockchain.static_ledger.can_stake(&sk2.get_public_key()));
 
-        for nonce in 0..50 {
+        for _ in 0..50 {
             let new_block = mine_new_block(&blockchain, &sk1).unwrap();
             blockchain.add_block(new_block).unwrap();
         }
