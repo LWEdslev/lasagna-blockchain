@@ -53,7 +53,7 @@ impl Ledger {
         Ok(())
     }
 
-    pub fn process_transaction(&mut self, transaction: &Transaction, depth: i64) -> Result<()> {
+    pub fn process_transaction(&mut self, transaction: &Transaction) -> Result<()> {
         transaction.verify_signature()?;        
         
         let amount = transaction.amount;
@@ -83,11 +83,6 @@ impl Ledger {
         let to_balance = self.map.get_mut(to).unwrap();
         *to_balance += amount;
 
-        // If `to` has not been published we must check if they have enough in their account for a publish
-        if !self.published_accounts.contains_key(to) && *to_balance >= MINIMUM_STAKE_AMOUNT {
-            self.published_accounts.insert(to.clone(), depth);
-        }
-
         Ok(())
     }
 
@@ -98,17 +93,10 @@ impl Ledger {
 
         let from_balance = self.map.get_mut(from).unwrap();
         *from_balance += amount + TRANSACTION_FEE;
-        let to_balance = self.map.get_mut(from).unwrap();
+        let to_balance = self.map.get_mut(to).unwrap();
         *to_balance -= amount;
 
         self.previous_transactions.remove(&transaction.hash);
-        
-        if let Some(published_at) = self.published_accounts.get(to) {
-            let published_at = *published_at;
-            if published_at == depth {
-                self.published_accounts.remove(to);
-            }
-        }
     }
 
     pub fn reward_winner(&mut self, winner: &PublicKey, amount: MiniLas) {

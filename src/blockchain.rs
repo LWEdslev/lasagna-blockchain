@@ -93,15 +93,12 @@ impl Blockchain {
             // Block seed should be the hash of the block from 50 rounds ago
             let seed_depth = (depth - SEED_AGE) as usize;
             let seed_block_ptr = &self.best_path[seed_depth];
-            let seed_block = &self
+            let _seed_block = &self
                 .get_block(seed_block_ptr)
                 .ok_or_else(|| anyhow!("Could not find seed block"))?;
 
             let seed = Seed {
-                block_ptr: BlockPtr {
-                    hash: seed_block.hash,
-                    depth: depth,
-                },
+                block_ptr: seed_block_ptr.clone(),
             };
 
             if block_seed != &seed {
@@ -147,7 +144,11 @@ impl Blockchain {
             }
         }
 
-        ensure!(is_winner(&self.get_static_ledger_of(block.depth)?, block.draw.clone(), &block.draw.signed_by));
+        ensure!(is_winner(
+            &self.get_static_ledger_of(block.depth)?,
+            block.draw.clone(),
+            &block.draw.signed_by
+        ));
 
         Ok(())
     }
@@ -178,8 +179,7 @@ impl Blockchain {
             }
 
             return Ok(current_static_ledger);
-        }
-        else {
+        } else {
             let from = current_static_ptr.depth as usize;
             let to = target_static_ptr.depth as usize;
             let path = &self.best_path[from..to];
@@ -188,10 +188,10 @@ impl Blockchain {
                 let reward = self.calculate_reward(block);
                 current_static_ledger.reward_winner(&block.draw.signed_by, reward);
                 for t in &block.transactions {
-                    current_static_ledger.process_transaction(&t, block.depth)?;
+                    current_static_ledger.process_transaction(&t)?;
                 }
             }
-            
+
             return Ok(current_static_ledger);
         }
     }
@@ -236,7 +236,7 @@ impl Blockchain {
                 self.transaction_buffer.remove(t);
             }
 
-            self.proccess_transactions(&block.transactions, block.depth)?;
+            self.proccess_transactions(&block.transactions)?;
             self.dynamic_ledger
                 .reward_winner(&block.draw.signed_by, self.calculate_reward(&block));
             self.best_path.push(block_ptr.clone());
@@ -274,7 +274,10 @@ impl Blockchain {
         let mut from = from.clone();
         while from != common {
             self.rollback_block(&from)?;
-            from = self.get_parent_from_ptr(&from).ok_or(anyhow!("no parent"))?.ptr();
+            from = self
+                .get_parent_from_ptr(&from)
+                .ok_or(anyhow!("no parent"))?
+                .ptr();
         }
 
         // Apply from `common` to `to`
@@ -283,7 +286,10 @@ impl Blockchain {
         let mut to = to.clone();
         while to != common {
             path.push(to.clone());
-            to = self.get_parent_from_ptr(&to).ok_or(anyhow!("no parent"))?.ptr();
+            to = self
+                .get_parent_from_ptr(&to)
+                .ok_or(anyhow!("no parent"))?
+                .ptr();
         }
 
         // Now we apply
@@ -291,7 +297,6 @@ impl Blockchain {
             let block_to_add = self.get_block(&block_ptr).ok_or(anyhow!("No block"))?;
             self.add_block(block_to_add.clone())?;
         }
-
 
         Ok(())
     }
@@ -311,20 +316,23 @@ impl Blockchain {
             .clone();
         for t in block.transactions.iter().rev() {
             self.dynamic_ledger.rollback_transaction(t, block.depth);
+            self.transaction_buffer.insert(t.clone());
         }
 
         self.dynamic_ledger
             .rollback_reward(&block.draw.signed_by, self.calculate_reward(&block));
 
-        self.blocks[block.depth as usize].remove_entry(&block_ptr.hash).ok_or(anyhow!("No block to remove"))?;
+        self.blocks[block.depth as usize]
+            .remove_entry(&block_ptr.hash)
+            .ok_or(anyhow!("No block to remove"))?;
 
-        if block.depth >= self.best_path.len() as i64 && self.blocks[block.depth as usize].len() == 0 {
+        if block.depth >= self.best_path.len() as i64
+            && self.blocks[block.depth as usize].len() == 0
+        {
             self.blocks.remove(block.depth as usize);
         }
 
         self.update_static_ledger()?;
-
-
 
         Ok(())
     }
@@ -368,8 +376,14 @@ impl Blockchain {
                 genesis_block.draw.seed.clone()
             }
         };
-        let new_static_ledger = self.get_static_ledger_of(depth).expect("unable to create new static ledger");
-        if is_winner(&new_static_ledger, Draw::new(timeslot, seed.clone(), sk), &sk.get_public_key()) {
+        let new_static_ledger = self
+            .get_static_ledger_of(depth)
+            .expect("unable to create new static ledger");
+        if is_winner(
+            &new_static_ledger,
+            Draw::new(timeslot, seed.clone(), sk),
+            &sk.get_public_key(),
+        ) {
             let block = Block::new(timeslot, prev_hash, depth, transactions, sk, seed);
 
             Some(block)
@@ -457,9 +471,9 @@ impl Blockchain {
         block.transactions.len() as MiniLas * TRANSACTION_FEE + BLOCK_REWARD
     }
 
-    fn proccess_transactions(&mut self, transactions: &Vec<Transaction>, depth: i64) -> Result<()> {
+    fn proccess_transactions(&mut self, transactions: &Vec<Transaction>) -> Result<()> {
         for t in transactions.iter() {
-            self.dynamic_ledger.process_transaction(t, depth)?;
+            self.dynamic_ledger.process_transaction(t)?;
         }
         Ok(())
     }
@@ -488,40 +502,99 @@ fn is_winner(ledger: &Ledger, draw: Draw, wallet: &PublicKey) -> bool {
 }
 
 #[cfg(test)]
-impl Blockchain {
-    
-}
+impl Blockchain {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Las;
     use pretty_assertions::assert_eq;
 
-    #[test]
-    fn test_start() {
-        let sk = SecretKey::generate();
-        let root_accounts = vec![sk.get_public_key()];
-        let genesis_block = Blockchain::produce_genesis_block(root_accounts.clone(), &sk);
-        let mut blockchain = Blockchain::start(root_accounts, genesis_block);
-        assert_eq!(blockchain.best_path.len(), 1);
-        assert_eq!(blockchain.dynamic_ledger.get_balance(&sk.get_public_key()), ROOT_AMOUNT);
-
-        let mut max_iter = 1000;    
+    fn mine_new_block(blockchain: &Blockchain, sk: &SecretKey) -> Option<Block> {
+        let mut max_iter = 10_000;
         let mut new_block = None;
         while new_block == None && max_iter > 0 {
-            new_block = blockchain.make_block(&sk);
+            new_block = blockchain.make_block(sk);
             max_iter -= 1;
         }
 
-        if max_iter == 0 {
-            eprintln!("no new block found")
-        }
+        return new_block;
+    }
 
-        let new_block = new_block.unwrap();
+    #[test]
+    fn test_start() {
+        let sk1 = SecretKey::generate();
+        let sk2 = SecretKey::generate();
+
+        let transaction_amount = Las(5);
+
+        let transaction = Transaction::new(&sk1, sk2.get_public_key(), transaction_amount, 42);
+
+        let root_accounts = vec![sk1.get_public_key(), sk2.get_public_key()];
+        let genesis_block = Blockchain::produce_genesis_block(root_accounts.clone(), &sk1);
+        let mut blockchain = Blockchain::start(root_accounts, genesis_block);
+
+        blockchain.add_transaction(transaction).unwrap();
+        assert_eq!(blockchain.best_path.len(), 1);
+        assert_eq!(
+            blockchain.dynamic_ledger.get_balance(&sk1.get_public_key()),
+            ROOT_AMOUNT
+        );
+
+        let new_block = mine_new_block(&blockchain, &sk1).unwrap();
         blockchain.add_block(new_block).unwrap();
-    
+
         assert_eq!(blockchain.best_path.len(), 2);
-        assert!(blockchain.dynamic_ledger.get_balance(&sk.get_public_key()) > ROOT_AMOUNT);
+        assert_eq!(
+            blockchain.dynamic_ledger.get_balance(&sk1.get_public_key()),
+            ROOT_AMOUNT + BLOCK_REWARD - transaction_amount.into_minilas()
+        );
+
+        assert_eq!(
+            blockchain.dynamic_ledger.get_balance(&sk2.get_public_key()),
+            ROOT_AMOUNT + transaction_amount.into_minilas()
+        );
+
+        let transaction2_amount = Las(2);
+
+        let transaction = Transaction::new(&sk2, sk1.get_public_key(), transaction2_amount, 54);
+        blockchain.add_transaction(transaction.clone()).unwrap();
+        let new_block = mine_new_block(&blockchain, &sk1).unwrap();
+        blockchain.add_block(new_block).unwrap();
+
+        assert_eq!(blockchain.best_path.len(), 3);
+        assert_eq!(
+            blockchain.dynamic_ledger.get_balance(&sk1.get_public_key()),
+            ROOT_AMOUNT + 2 * BLOCK_REWARD + TRANSACTION_FEE + transaction2_amount.into_minilas()
+                - transaction_amount.into_minilas()
+        );
+
+        assert_eq!(
+            blockchain.dynamic_ledger.get_balance(&sk2.get_public_key()),
+            ROOT_AMOUNT - TRANSACTION_FEE - transaction2_amount.into_minilas()
+                + transaction_amount.into_minilas()
+        );
+        assert_eq!(blockchain.transaction_buffer, vec![].into_iter().collect());
+
+        blockchain
+            .rollback_block(&blockchain.best_path_head().clone())
+            .unwrap();
+
+        assert_eq!(blockchain.best_path.len(), 2);
+        assert_eq!(
+            blockchain.dynamic_ledger.get_balance(&sk1.get_public_key()),
+            ROOT_AMOUNT + BLOCK_REWARD - transaction_amount.into_minilas()
+        );
+
+        assert_eq!(
+            blockchain.dynamic_ledger.get_balance(&sk2.get_public_key()),
+            ROOT_AMOUNT + transaction_amount.into_minilas()
+        );
+
+        assert_eq!(
+            blockchain.transaction_buffer,
+            vec![transaction].into_iter().collect()
+        );
     }
 
     #[test]
@@ -531,31 +604,116 @@ mod tests {
         let genesis_block = Blockchain::produce_genesis_block(root_accounts.clone(), &sk);
         let mut blockchain = Blockchain::start(root_accounts, genesis_block);
         assert_eq!(blockchain.best_path.len(), 1);
-        assert_eq!(blockchain.dynamic_ledger.get_balance(&sk.get_public_key()), ROOT_AMOUNT);
+        assert_eq!(
+            blockchain.dynamic_ledger.get_balance(&sk.get_public_key()),
+            ROOT_AMOUNT
+        );
 
         let initial_blockchain = blockchain.clone();
 
-        let mut max_iter = 1000;    
-        let mut new_block = None;
-        while new_block == None && max_iter > 0 {
-            new_block = blockchain.make_block(&sk);
-            max_iter -= 1;
-        }
-
-        if max_iter == 0 {
-            eprintln!("no new block found")
-        }
-
-        let new_block = new_block.unwrap();
+        let new_block = mine_new_block(&blockchain, &sk).unwrap();
         blockchain.add_block(new_block).unwrap();
-    
+
         assert_eq!(blockchain.best_path.len(), 2);
         assert!(blockchain.dynamic_ledger.get_balance(&sk.get_public_key()) > ROOT_AMOUNT);
 
-        blockchain.rollback_block(&blockchain.best_path_head().clone()).unwrap();
-        
+        blockchain
+            .rollback_block(&blockchain.best_path_head().clone())
+            .unwrap();
+
         assert_eq!(blockchain.best_path.len(), 1);
-        assert_eq!(blockchain.dynamic_ledger.get_balance(&sk.get_public_key()), ROOT_AMOUNT);   
+        assert_eq!(
+            blockchain.dynamic_ledger.get_balance(&sk.get_public_key()),
+            ROOT_AMOUNT
+        );
         assert_eq!(blockchain, initial_blockchain);
+    }
+
+    #[test]
+    fn test_multiple_blocks() {
+        let sk = SecretKey::generate();
+        let root_accounts = vec![sk.get_public_key()];
+        let genesis_block = Blockchain::produce_genesis_block(root_accounts.clone(), &sk);
+        let mut blockchain = Blockchain::start(root_accounts, genesis_block);
+        assert_eq!(blockchain.best_path.len(), 1);
+        assert_eq!(
+            blockchain.dynamic_ledger.get_balance(&sk.get_public_key()),
+            ROOT_AMOUNT
+        );
+
+        let new_block = mine_new_block(&blockchain, &sk).unwrap();
+        let new_block2 = mine_new_block(&blockchain, &sk).unwrap();
+        blockchain.add_block(new_block).unwrap();
+        blockchain.add_block(new_block2).unwrap();
+
+        assert_eq!(blockchain.best_path.len(), 2);
+        assert!(blockchain.dynamic_ledger.get_balance(&sk.get_public_key()) > ROOT_AMOUNT);
+    }
+
+    #[test]
+    fn many_blocks_and_verify_chain() {
+        let sk1 = SecretKey::generate();
+        let sk2 = SecretKey::generate();
+        let transaction_amount = Las(1);
+
+        let root_accounts = vec![sk1.get_public_key()];
+        let genesis_block = Blockchain::produce_genesis_block(root_accounts.clone(), &sk1);
+        let mut blockchain = Blockchain::start(root_accounts, genesis_block);
+        assert_eq!(blockchain.best_path.len(), 1);
+        assert_eq!(
+            blockchain.dynamic_ledger.get_balance(&sk1.get_public_key()),
+            ROOT_AMOUNT
+        );
+
+        for nonce in 1..150 {
+            let transaction =
+                Transaction::new(&sk1, sk2.get_public_key(), transaction_amount, nonce);
+            blockchain.add_transaction(transaction).unwrap();
+            let new_block = mine_new_block(&blockchain, &sk1).unwrap();
+            blockchain.add_block(new_block).unwrap();
+        }
+
+        assert_eq!(blockchain.best_path.len(), 150);
+        blockchain.verify_chain().unwrap();
+        blockchain.best_path = blockchain.best_path[..(blockchain.best_path.len() - 1)]
+            .iter()
+            .cloned()
+            .collect();
+        assert!(blockchain.verify_chain().is_err());
+    }
+
+    #[test]
+    fn test_account_publishing() {
+        let sk1 = SecretKey::generate();
+        let sk2 = SecretKey::generate();
+        let transaction_amount = Las(1);
+
+        let root_accounts = vec![sk1.get_public_key()];
+        let genesis_block = Blockchain::produce_genesis_block(root_accounts.clone(), &sk1);
+        let mut blockchain = Blockchain::start(root_accounts, genesis_block);
+        assert_eq!(blockchain.best_path.len(), 1);
+        assert_eq!(
+            blockchain.dynamic_ledger.get_balance(&sk1.get_public_key()),
+            ROOT_AMOUNT
+        );
+
+        for nonce in 0..50 {
+            if nonce == 5 {
+                let transaction =
+                    Transaction::new(&sk1, sk2.get_public_key(), transaction_amount, nonce);
+                blockchain.add_transaction(transaction).unwrap();
+            }
+            let new_block = mine_new_block(&blockchain, &sk1).unwrap();
+            blockchain.add_block(new_block).unwrap();
+        }
+
+        assert!(!blockchain.static_ledger.can_stake(&sk2.get_public_key()));
+
+        for nonce in 0..50 {
+            let new_block = mine_new_block(&blockchain, &sk1).unwrap();
+            blockchain.add_block(new_block).unwrap();
+        }
+
+        assert!(!blockchain.static_ledger.can_stake(&sk2.get_public_key()));
     }
 }
